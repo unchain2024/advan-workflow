@@ -1,0 +1,12 @@
+credentials.json
+token.pickle
+.env
+AUTHENTICATION_OPTIONS.md
+IMPLEMENTATION_SUMMARY.md
+NEXT_STEPS.md
+OAUTH_SETUP.md
+README_APP.md
+company_config.json
+input
+output
+__pycache__
