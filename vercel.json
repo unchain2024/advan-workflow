@@ -1,6 +1,11 @@
 {
-  "buildCommand": "cd frontend-react && npm install && npm run build",
+  "buildCommand": "cd frontend-react && npm ci && npm run build",
   "outputDirectory": "frontend-react/dist",
+  "functions": {
+    "api/*.py": {
+      "runtime": "python3.9"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
