@@ -1,7 +1,6 @@
 {
   "buildCommand": "cd frontend-react && npm install && npm run build",
   "outputDirectory": "frontend-react/dist",
-  "installCommand": "pip install -r requirements.txt",
   "rewrites": [
     {
       "source": "/api/(.*)",
