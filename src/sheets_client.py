@@ -107,11 +107,19 @@ class GoogleSheetsClient:
             else:
                 # サービスアカウント認証
                 # Streamlit Cloudの場合はsecretsから読み込む
-                if HAS_STREAMLIT and hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-                    credentials = ServiceAccountCredentials.from_service_account_info(
-                        dict(st.secrets['gcp_service_account']), scopes=scopes
-                    )
-                else:
+                streamlit_secrets_available = False
+                if HAS_STREAMLIT:
+                    try:
+                        if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+                            credentials = ServiceAccountCredentials.from_service_account_info(
+                                dict(st.secrets['gcp_service_account']), scopes=scopes
+                            )
+                            streamlit_secrets_available = True
+                    except Exception:
+                        # Streamlit が動作していない場合はスキップ
+                        pass
+
+                if not streamlit_secrets_available:
                     # ローカルではファイルから読み込む
                     credentials = ServiceAccountCredentials.from_service_account_file(
                         str(self.credentials_path), scopes=scopes
@@ -121,8 +129,11 @@ class GoogleSheetsClient:
         return self._client
 
     def _get_oauth_credentials(self, scopes: list[str]):
-        """OAuth 2.0 認証情報を取得"""
-        token_path = Path("token.pickle")
+        """OAuth 2.0 認証情報を取得（本番環境対応）"""
+        # token.pickleのパスを取得（プロジェクトルート）
+        # backend-apiから起動している場合は親ディレクトリを参照
+        base_dir = Path(__file__).parent.parent
+        token_path = base_dir / "token.pickle"
         credentials = None
 
         # 保存済みトークンがあれば読み込む
@@ -130,22 +141,51 @@ class GoogleSheetsClient:
             with open(token_path, "rb") as token:
                 credentials = pickle.load(token)
 
-        # トークンが無効または存在しない場合は再認証
+        # トークンが無効または存在しない場合
         if not credentials or not credentials.valid:
             if credentials and credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
+                # リフレッシュトークンでトークンを更新（本番環境で使用）
+                try:
+                    credentials.refresh(Request())
+                    # 更新されたトークンを保存
+                    with open(token_path, "wb") as token:
+                        pickle.dump(credentials, token)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"❌ OAuth認証トークンの更新に失敗しました: {e}\n"
+                        f"本番環境では、事前に生成したtoken.pickleが必要です。\n"
+                        f"ローカル環境で `python oauth_setup.py` を実行してtoken.pickleを生成し、\n"
+                        f"本番環境にデプロイしてください。"
+                    )
             else:
+                # 本番環境ではインタラクティブ認証を実行しない
+                is_production = os.getenv("ENVIRONMENT", "development") == "production"
+                if is_production:
+                    raise RuntimeError(
+                        "❌ OAuth認証が必要です。\n"
+                        "本番環境では、事前に生成したtoken.pickleが必要です。\n"
+                        "ローカル環境で以下を実行してください:\n"
+                        "  1. python oauth_setup.py\n"
+                        "  2. 生成されたtoken.pickleを本番環境にデプロイ"
+                    )
+
+                # 開発環境のみインタラクティブ認証を実行
+                if not self.credentials_path.exists():
+                    raise RuntimeError(
+                        f"❌ {self.credentials_path} が見つかりません。\n"
+                        "Google Cloud ConsoleでOAuth 2.0クライアントID（デスクトップアプリ）を作成し、\n"
+                        "credentials.jsonとして保存してください。"
+                    )
+
                 flow = InstalledAppFlow.from_client_secrets_file(
                     str(self.credentials_path), scopes
                 )
-                # ウェブアプリタイプの場合、リダイレクトURIに登録したポートを使用
-                # デフォルト: 8080（Google Cloud ConsoleのリダイレクトURIと一致させる）
                 port = int(os.getenv("OAUTH_PORT", "8080"))
                 credentials = flow.run_local_server(port=port)
 
-            # トークンを保存
-            with open(token_path, "wb") as token:
-                pickle.dump(credentials, token)
+                # トークンを保存
+                with open(token_path, "wb") as token:
+                    pickle.dump(credentials, token)
 
         return credentials
 

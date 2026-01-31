@@ -142,21 +142,50 @@ class LLMExtractor:
     def _get_vision_client(self):
         """Vision APIクライアントを取得（OAuth認証またはサービスアカウント）"""
         # Streamlit Cloudの場合はsecretsから読み込む
-        if HAS_STREAMLIT and hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-            credentials = ServiceAccountCredentials.from_service_account_info(
-                dict(st.secrets['gcp_service_account'])
-            )
-            return vision.ImageAnnotatorClient(credentials=credentials)
+        if HAS_STREAMLIT:
+            try:
+                if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+                    credentials = ServiceAccountCredentials.from_service_account_info(
+                        dict(st.secrets['gcp_service_account'])
+                    )
+                    return vision.ImageAnnotatorClient(credentials=credentials)
+            except Exception:
+                # Streamlit が動作していない場合はスキップ
+                pass
 
-        # ローカルではOAuth認証を使用
-        token_path = Path("token.pickle")
-        if token_path.exists():
-            with open(token_path, "rb") as token:
-                credentials = pickle.load(token)
-                # Vision APIクライアントを作成
+        # OAuth認証を使用するかチェック
+        use_oauth = os.getenv("USE_OAUTH", "false").lower() == "true"
+
+        if use_oauth:
+            # OAuth認証: token.pickleを探す（プロジェクトルート）
+            # backend-apiから起動している場合は親ディレクトリを参照
+            base_dir = Path(__file__).parent.parent
+            token_path = base_dir / "token.pickle"
+
+            if token_path.exists():
+                with open(token_path, "rb") as token:
+                    credentials = pickle.load(token)
+                    # Vision APIクライアントを作成
+                    return vision.ImageAnnotatorClient(credentials=credentials)
+
+            raise RuntimeError(
+                "❌ OAuth認証が必要です。\n"
+                "プロジェクトルートで `python oauth_setup.py` を実行してtoken.pickleを生成してください。"
+            )
+        else:
+            # サービスアカウント認証: credentials.jsonを使用
+            credentials_path = CREDENTIALS_PATH
+            if credentials_path.exists():
+                credentials = ServiceAccountCredentials.from_service_account_file(
+                    str(credentials_path)
+                )
                 return vision.ImageAnnotatorClient(credentials=credentials)
 
-        raise RuntimeError("OAuth認証が必要です。先にSheets APIを使用して認証してください。")
+            raise RuntimeError(
+                f"❌ 認証情報が見つかりません。\n"
+                f"credentials.jsonを {credentials_path} に配置するか、\n"
+                f"USE_OAUTH=true でOAuth認証を使用してください。"
+            )
 
     def extract(self, pdf_path: Path) -> DeliveryNote:
         """PDFから納品書データを抽出

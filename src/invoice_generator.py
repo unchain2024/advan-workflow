@@ -79,6 +79,10 @@ class InvoiceGenerator:
         """請求書PDFを生成"""
         self._register_font()
 
+        # デバッグ: 入力データを出力
+        print(f"DEBUG: delivery_note.date = {delivery_note.date}")
+        print(f"DEBUG: delivery_note.company_name = {delivery_note.company_name}")
+
         # 締切日を計算（月末）
         date_str = delivery_note.date or datetime.now().strftime("%Y/%m/%d")
         try:
@@ -137,6 +141,9 @@ class InvoiceGenerator:
 
     def _create_pdf(self, data: InvoiceData, output_path: Path):
         """PDFを作成（複数ページ対応）"""
+        # デバッグ: 日付を出力
+        print(f"DEBUG: PDF生成 - data.date = {data.date}")
+
         c = canvas.Canvas(str(output_path), pagesize=A4)
         width, height = A4
 
@@ -364,18 +371,27 @@ class InvoiceGenerator:
                     # YYYY/MM/DD → YY/MM/DD に変換
                     parts = data.date.split("/")
                     if len(parts) == 3:
-                        date_str = f"{parts[0][2:]}/{parts[1]}/{parts[2]}"
+                        # YYYYが4桁の場合のみ下2桁を取得
+                        year = parts[0]
+                        if len(year) == 4:
+                            date_str = f"{year[2:]}/{parts[1].zfill(2)}/{parts[2].zfill(2)}"
+                        else:
+                            date_str = f"{year}/{parts[1].zfill(2)}/{parts[2].zfill(2)}"
                     else:
                         date_str = data.date
-                except:
+                except Exception as e:
+                    print(f"日付変換エラー: {data.date} -> {e}")
                     date_str = data.date
 
             c.rect(current_x, data_y, columns[0][1], row_height)
             c.drawString(current_x + 1 * mm, data_y + 1.5 * mm, date_str)
             current_x += columns[0][1]
 
-            # 伝票番号（"None"の場合は空欄に）
-            slip_num = item.slip_number[:10] if item.slip_number and item.slip_number != "None" else ""
+            # 伝票番号（明細行の伝票番号を使用、"None"の場合は空欄に）
+            # 伝票番号がない場合は日付列を空欄にする
+            slip_num = ""
+            if item.slip_number and item.slip_number != "None" and len(item.slip_number.strip()) > 0:
+                slip_num = item.slip_number[:10]
             c.rect(current_x, data_y, columns[1][1], row_height)
             c.drawString(current_x + 1 * mm, data_y + 1.5 * mm, slip_num)
             current_x += columns[1][1]
