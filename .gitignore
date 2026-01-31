@@ -10,3 +10,6 @@ company_config.json
 input
 output
 __pycache__
+
+# Vercel
+.vercel
