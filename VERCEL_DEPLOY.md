@@ -38,7 +38,6 @@ BILLING_SPREADSHEET_ID=<スプレッドシートID>
 DELIVERY_DB_SPREADSHEET_ID=<スプレッドシートID>
 
 # API Keys
-ANTHROPIC_API_KEY=<Claude APIキー>
 GEMINI_API_KEY=<Gemini APIキー>
 
 # OAuth認証
@@ -114,8 +113,9 @@ Vercelの永続ストレージサービスを使用してファイルを保存�
 ### 推奨事項:
 1. **PDF生成**: 60秒制限に注意。大きなPDFは時間がかかる
 2. **Google Sheets API**: 複数行の読み書きは時間がかかる可能性
-3. **Claude/Gemini API**: Vision APIは画像サイズに注意
+3. **Gemini API**: 構造化抽出の精度に注意
 4. **ファイル保存**: 生成したPDFは`/tmp`に保存され、リクエスト終了後に削除される
+5. **日本語フォント**: プロジェクトに含まれるIPAexゴシックフォントが自動的にデプロイされます
 
 ## トラブルシューティング
 

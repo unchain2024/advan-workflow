@@ -2,7 +2,7 @@
 
 PDFから情報抽出する2段階処理：
 1. Google Cloud Vision APIでOCR（文字認識）
-2. Claude APIで構造化（項目ごとに分解）
+2. Gemini APIで構造化（項目ごとに分解）
 """
 import base64
 import json
@@ -12,7 +12,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
-import anthropic
 from google import genai
 from google.cloud import vision
 from google.oauth2.credentials import Credentials

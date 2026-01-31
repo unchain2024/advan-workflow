@@ -65,12 +65,9 @@ def save_company_config(config: dict) -> bool:
 
 OWN_COMPANY = load_company_config()
 
-# PDF設定
-PDF_FONT_PATH = os.getenv("PDF_FONT_PATH", "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf")
-
-# LLM設定（Claude API）
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")  # Vision対応モデル
+# PDF設定（日本語フォント）
+# デフォルト: プロジェクト内のIPAexゴシックフォントを使用
+PDF_FONT_PATH = os.getenv("PDF_FONT_PATH", str(BASE_DIR / "fonts" / "ipaexg.ttf"))
 
 # Gemini API設定
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

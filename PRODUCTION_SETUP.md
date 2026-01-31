@@ -56,7 +56,6 @@ BILLING_SPREADSHEET_ID=your_billing_id
 DELIVERY_DB_SPREADSHEET_ID=your_delivery_db_id
 
 # API Keys
-ANTHROPIC_API_KEY=your_anthropic_api_key
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
