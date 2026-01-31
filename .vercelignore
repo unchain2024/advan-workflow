@@ -1,0 +1,20 @@
+# ルートのrequirements.txtを無視（api/requirements.txtを使用）
+/requirements.txt
+
+# 開発用ファイル
+input/
+output/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+
+# 認証ファイル（環境変数で設定）
+credentials.json
+token.pickle
+company_config.json
+.env
+.env.local
