@@ -1,30 +1,15 @@
 {
-  "version": 2,
-  "builds": [
+  "buildCommand": "cd frontend-react && npm install && npm run build",
+  "outputDirectory": "frontend-react/dist",
+  "installCommand": "pip install -r requirements.txt",
+  "rewrites": [
     {
-      "src": "frontend-react/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
     },
     {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/output/(.*)",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/frontend-react/dist/$1"
+      "source": "/output/(.*)",
+      "destination": "/api/index.py"
     }
   ]
 }
