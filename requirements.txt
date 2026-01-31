@@ -3,9 +3,6 @@ pdf2image==1.17.0
 reportlab==4.2.5
 Pillow>=11.0.0
 
-# LLM（Claude API）
-anthropic>=0.40.0
-
 # Gemini API
 google-genai>=1.0.0
 
@@ -21,5 +18,7 @@ google-cloud-vision>=3.4.0
 # ユーティリティ
 python-dotenv>=1.0.0
 
-# Webアプリ
-streamlit>=1.30.0
+# Webアプリ（FastAPI）
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
