@@ -149,31 +149,65 @@ class GoogleSheetsClient:
 
         # 環境変数からBase64エンコードされたトークンを読み込む（Vercel対応）
         token_base64 = os.getenv("GOOGLE_TOKEN_BASE64")
+        print(f"[DEBUG Sheets] GOOGLE_TOKEN_BASE64 exists: {token_base64 is not None}")
+        print(f"[DEBUG Sheets] GOOGLE_TOKEN_BASE64 length: {len(token_base64) if token_base64 else 0}")
+
         if token_base64:
             try:
+                print("[DEBUG Sheets] Attempting to decode Base64 token...")
                 token_data = base64.b64decode(token_base64)
+                print(f"[DEBUG Sheets] Decoded token size: {len(token_data)} bytes")
+
+                print("[DEBUG Sheets] Attempting to unpickle credentials...")
                 credentials = pickle.loads(token_data)
+                print("[DEBUG Sheets] Successfully loaded credentials from environment variable")
             except Exception as e:
-                print(f"環境変数からのトークン読み込みエラー: {e}")
+                print(f"❌ 環境変数からのトークン読み込みエラー: {type(e).__name__}: {e}")
+                import traceback
+                traceback.print_exc()
 
         # ファイルシステムからtoken.pickleを読み込む（ローカル環境）
         if not credentials:
+            print("[DEBUG Sheets] Attempting to load from file system...")
             base_dir = Path(__file__).parent.parent
             token_path = base_dir / "token.pickle"
             if token_path.exists():
+                print(f"[DEBUG Sheets] Found token.pickle at {token_path}")
                 with open(token_path, "rb") as token:
                     credentials = pickle.load(token)
+            else:
+                print(f"[DEBUG Sheets] token.pickle not found at {token_path}")
 
         # トークンが無効または存在しない場合
+        print(f"[DEBUG Sheets] Credentials loaded: {credentials is not None}")
+        if credentials:
+            print(f"[DEBUG Sheets] Credentials valid: {credentials.valid}")
+            print(f"[DEBUG Sheets] Credentials expired: {credentials.expired if hasattr(credentials, 'expired') else 'N/A'}")
+            print(f"[DEBUG Sheets] Has refresh_token: {credentials.refresh_token is not None if hasattr(credentials, 'refresh_token') else 'N/A'}")
+
         if not credentials or not credentials.valid:
             if credentials and credentials.expired and credentials.refresh_token:
                 # リフレッシュトークンでトークンを更新（本番環境で使用）
+                print("[DEBUG Sheets] Attempting to refresh expired token...")
                 try:
                     credentials.refresh(Request())
-                    # 更新されたトークンを保存
-                    with open(token_path, "wb") as token:
-                        pickle.dump(credentials, token)
+                    print("[DEBUG Sheets] Token refresh successful!")
+
+                    # 更新されたトークンを保存（可能な場合のみ）
+                    base_dir = Path(__file__).parent.parent
+                    token_path = base_dir / "token.pickle"
+                    try:
+                        with open(token_path, "wb") as token:
+                            pickle.dump(credentials, token)
+                        print(f"[DEBUG Sheets] Updated token saved to {token_path}")
+                    except Exception as save_error:
+                        print(f"[DEBUG Sheets] Could not save updated token (this is OK in production): {save_error}")
+
+                    return credentials
                 except Exception as e:
+                    print(f"❌ トークンのリフレッシュに失敗: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     raise RuntimeError(
                         f"❌ OAuth認証トークンの更新に失敗しました: {e}\n"
                         f"本番環境では、事前に生成したtoken.pickleが必要です。\n"
