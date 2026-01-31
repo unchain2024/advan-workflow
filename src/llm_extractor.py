@@ -156,23 +156,43 @@ class LLMExtractor:
         use_oauth = os.getenv("USE_OAUTH", "false").lower() == "true"
 
         if use_oauth:
-            # OAuth認証: token.pickleを探す（プロジェクトルート）
-            # backend-apiから起動している場合は親ディレクトリを参照
+            # 環境変数からBase64エンコードされたトークンを読み込む（Vercel対応）
+            token_base64 = os.getenv("GOOGLE_TOKEN_BASE64")
+            if token_base64:
+                try:
+                    token_data = base64.b64decode(token_base64)
+                    credentials = pickle.loads(token_data)
+                    return vision.ImageAnnotatorClient(credentials=credentials)
+                except Exception as e:
+                    print(f"環境変数からのトークン読み込みエラー: {e}")
+
+            # ファイルシステムからtoken.pickleを探す（ローカル環境）
             base_dir = Path(__file__).parent.parent
             token_path = base_dir / "token.pickle"
 
             if token_path.exists():
                 with open(token_path, "rb") as token:
                     credentials = pickle.load(token)
-                    # Vision APIクライアントを作成
                     return vision.ImageAnnotatorClient(credentials=credentials)
 
             raise RuntimeError(
                 "❌ OAuth認証が必要です。\n"
+                "環境変数 GOOGLE_TOKEN_BASE64 を設定するか、\n"
                 "プロジェクトルートで `python oauth_setup.py` を実行してtoken.pickleを生成してください。"
             )
         else:
-            # サービスアカウント認証: credentials.jsonを使用
+            # 環境変数からBase64エンコードされたcredentialsを読み込む（Vercel対応）
+            credentials_base64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
+            if credentials_base64:
+                try:
+                    credentials_data = base64.b64decode(credentials_base64)
+                    credentials_info = json.loads(credentials_data)
+                    credentials = ServiceAccountCredentials.from_service_account_info(credentials_info)
+                    return vision.ImageAnnotatorClient(credentials=credentials)
+                except Exception as e:
+                    print(f"環境変数からのcredentials読み込みエラー: {e}")
+
+            # ファイルシステムからcredentials.jsonを使用（ローカル環境）
             credentials_path = CREDENTIALS_PATH
             if credentials_path.exists():
                 credentials = ServiceAccountCredentials.from_service_account_file(
@@ -182,8 +202,8 @@ class LLMExtractor:
 
             raise RuntimeError(
                 f"❌ 認証情報が見つかりません。\n"
-                f"credentials.jsonを {credentials_path} に配置するか、\n"
-                f"USE_OAUTH=true でOAuth認証を使用してください。"
+                f"環境変数 GOOGLE_CREDENTIALS_BASE64 を設定するか、\n"
+                f"credentials.jsonを {credentials_path} に配置してください。"
             )
 
     def extract(self, pdf_path: Path) -> DeliveryNote:

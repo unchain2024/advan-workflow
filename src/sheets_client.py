@@ -6,6 +6,7 @@ from typing import Optional
 import os
 import re
 import json
+import base64
 
 import gspread
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
@@ -120,26 +121,48 @@ class GoogleSheetsClient:
                         pass
 
                 if not streamlit_secrets_available:
-                    # ローカルではファイルから読み込む
-                    credentials = ServiceAccountCredentials.from_service_account_file(
-                        str(self.credentials_path), scopes=scopes
-                    )
+                    # 環境変数からBase64エンコードされたcredentialsを読み込む（Vercel対応）
+                    credentials_base64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
+                    if credentials_base64:
+                        try:
+                            credentials_data = base64.b64decode(credentials_base64)
+                            credentials_info = json.loads(credentials_data)
+                            credentials = ServiceAccountCredentials.from_service_account_info(
+                                credentials_info, scopes=scopes
+                            )
+                            streamlit_secrets_available = True
+                        except Exception as e:
+                            print(f"環境変数からのcredentials読み込みエラー: {e}")
+
+                    if not streamlit_secrets_available:
+                        # ローカルではファイルから読み込む
+                        credentials = ServiceAccountCredentials.from_service_account_file(
+                            str(self.credentials_path), scopes=scopes
+                        )
 
             self._client = gspread.authorize(credentials)
         return self._client
 
     def _get_oauth_credentials(self, scopes: list[str]):
         """OAuth 2.0 認証情報を取得（本番環境対応）"""
-        # token.pickleのパスを取得（プロジェクトルート）
-        # backend-apiから起動している場合は親ディレクトリを参照
-        base_dir = Path(__file__).parent.parent
-        token_path = base_dir / "token.pickle"
         credentials = None
 
-        # 保存済みトークンがあれば読み込む
-        if token_path.exists():
-            with open(token_path, "rb") as token:
-                credentials = pickle.load(token)
+        # 環境変数からBase64エンコードされたトークンを読み込む（Vercel対応）
+        token_base64 = os.getenv("GOOGLE_TOKEN_BASE64")
+        if token_base64:
+            try:
+                token_data = base64.b64decode(token_base64)
+                credentials = pickle.loads(token_data)
+            except Exception as e:
+                print(f"環境変数からのトークン読み込みエラー: {e}")
+
+        # ファイルシステムからtoken.pickleを読み込む（ローカル環境）
+        if not credentials:
+            base_dir = Path(__file__).parent.parent
+            token_path = base_dir / "token.pickle"
+            if token_path.exists():
+                with open(token_path, "rb") as token:
+                    credentials = pickle.load(token)
 
         # トークンが無効または存在しない場合
         if not credentials or not credentials.valid:
