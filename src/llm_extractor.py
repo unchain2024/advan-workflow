@@ -134,6 +134,14 @@ class LLMExtractor:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or GEMINI_API_KEY
         self.model = model or GEMINI_MODEL
+
+        # API キーの検証
+        if not self.api_key:
+            raise ValueError(
+                "❌ GEMINI_API_KEY が設定されていません。\n"
+                "環境変数 GEMINI_API_KEY を設定してください。"
+            )
+
         # Gemini Client作成
         self.gemini_client = genai.Client(api_key=self.api_key)
         self.vision_client = self._get_vision_client()
