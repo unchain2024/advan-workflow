@@ -4,9 +4,10 @@ interface MessageProps {
   type: 'success' | 'info' | 'warning' | 'error';
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }
 
-export const Message: React.FC<MessageProps> = ({ type, children, className = '' }) => {
+export const Message: React.FC<MessageProps> = ({ type, children, className = '', style }) => {
   const typeClasses = {
     success: 'bg-green-50 text-green-800 border-l-green-500',
     info: 'bg-blue-50 text-blue-800 border-l-blue-500',
@@ -24,6 +25,7 @@ export const Message: React.FC<MessageProps> = ({ type, children, className = ''
   return (
     <div
       className={`px-4 py-3 border-l-4 rounded ${typeClasses[type]} ${className}`}
+      style={style}
     >
       <span className="mr-2">{icons[type]}</span>
       {children}
