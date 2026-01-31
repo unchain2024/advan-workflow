@@ -1,0 +1,16 @@
+services:
+  # バックエンドAPI
+  - type: web
+    name: advan-workflow-api
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install -r requirements.txt && cd frontend-react && npm ci && npm run build"
+    startCommand: "cd backend-api && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: USE_OAUTH
+        value: true
+      - key: PYTHON_VERSION
+        value: 3.11
