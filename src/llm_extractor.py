@@ -166,13 +166,25 @@ class LLMExtractor:
         if use_oauth:
             # 環境変数からBase64エンコードされたトークンを読み込む（Vercel対応）
             token_base64 = os.getenv("GOOGLE_TOKEN_BASE64")
+            print(f"[DEBUG] USE_OAUTH: {use_oauth}")
+            print(f"[DEBUG] GOOGLE_TOKEN_BASE64 exists: {token_base64 is not None}")
+            print(f"[DEBUG] GOOGLE_TOKEN_BASE64 length: {len(token_base64) if token_base64 else 0}")
+
             if token_base64:
                 try:
+                    print("[DEBUG] Attempting to decode Base64 token...")
                     token_data = base64.b64decode(token_base64)
+                    print(f"[DEBUG] Decoded token size: {len(token_data)} bytes")
+
+                    print("[DEBUG] Attempting to unpickle credentials...")
                     credentials = pickle.loads(token_data)
+                    print("[DEBUG] Successfully loaded credentials from environment variable")
+
                     return vision.ImageAnnotatorClient(credentials=credentials)
                 except Exception as e:
-                    print(f"環境変数からのトークン読み込みエラー: {e}")
+                    print(f"❌ 環境変数からのトークン読み込みエラー: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             # ファイルシステムからtoken.pickleを探す（ローカル環境）
             base_dir = Path(__file__).parent.parent
@@ -396,10 +408,22 @@ class LLMExtractor:
         tax = int(data.get("tax", 0) or 0)
         total = int(data.get("total", 0) or 0)
 
-        # 小計と消費税が0の場合、合計から逆算（消費税10%として計算）
-        if total > 0 and subtotal == 0 and tax == 0:
-            subtotal = int(total / 1.1)
-            tax = total - subtotal
+        # 納品書の金額は「税抜き価格」が記載されている前提で計算
+        # パターン1: subtotal（税抜き）のみ記載されている場合
+        if subtotal > 0 and tax == 0:
+            tax = int(subtotal * 0.1)
+            if total == 0:
+                total = subtotal + tax
+
+        # パターン2: total のみ記載されている場合、それを税抜き価格として扱う
+        elif total > 0 and subtotal == 0 and tax == 0:
+            subtotal = total
+            tax = int(subtotal * 0.1)
+            total = subtotal + tax
+
+        # パターン3: total が記載されていないが、subtotal と tax がある場合
+        elif subtotal > 0 and tax > 0 and total == 0:
+            total = subtotal + tax
 
         return DeliveryNote(
             date=data.get("date", ""),
