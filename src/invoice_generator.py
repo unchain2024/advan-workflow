@@ -61,10 +61,20 @@ class InvoiceGenerator:
             return
 
         try:
-            pdfmetrics.registerFont(TTFont(self.FONT_NAME, self.font_path))
+            print(f"[DEBUG] Attempting to register font: {self.font_path}")
+            from pathlib import Path
+            font_file = Path(self.font_path)
+            print(f"[DEBUG] Font file exists: {font_file.exists()}")
+            print(f"[DEBUG] Font file absolute path: {font_file.absolute()}")
+
+            pdfmetrics.registerFont(TTFont(self.FONT_NAME, str(self.font_path)))
             self._font_registered = True
-        except Exception:
+            print(f"[DEBUG] Font '{self.FONT_NAME}' registered successfully")
+        except Exception as e:
             # フォントが見つからない場合はデフォルトフォントを使用
+            print(f"❌ フォント登録エラー: {type(e).__name__}: {e}")
+            print(f"   フォントパス: {self.font_path}")
+            print(f"   Helvetica フォントにフォールバックします（日本語表示不可）")
             self.FONT_NAME = "Helvetica"
             self._font_registered = True
 

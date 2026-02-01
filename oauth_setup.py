@@ -41,12 +41,20 @@ def setup_oauth():
             print("アプリケーションにGoogle Sheetsへのアクセスを許可してください。")
 
             flow = InstalledAppFlow.from_client_secrets_file(
-                str(credentials_path), scopes
+                str(credentials_path),
+                scopes=scopes,
+                # refresh_token を取得するために必須
+                redirect_uri='http://localhost:8080'
             )
 
             # ポートを指定（環境変数で変更可能）
             port = int(os.getenv("OAUTH_PORT", "8080"))
-            credentials = flow.run_local_server(port=port)
+            # access_type='offline' と prompt='consent' を指定して refresh_token を取得
+            credentials = flow.run_local_server(
+                port=port,
+                access_type='offline',
+                prompt='consent'
+            )
 
         # トークンを保存
         with open(token_path, "wb") as token:
