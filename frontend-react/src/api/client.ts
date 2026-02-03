@@ -9,6 +9,9 @@ import type {
   CompanyConfig,
   RegenerateInvoiceRequest,
   RegenerateInvoiceResponse,
+  ProcessPurchasePDFResponse,
+  SavePurchaseRecordRequest,
+  SavePurchaseRecordResponse,
 } from '../types';
 
 const API_BASE_URL = '/api';
@@ -88,5 +91,41 @@ export const saveCompanyConfig = async (
   data: CompanyConfig
 ): Promise<{ success: boolean; message: string }> => {
   const response = await apiClient.post<{ success: boolean; message: string }>('/company-config', data);
+  return response.data;
+};
+
+// 仕入れ関連API
+export const processPurchasePDF = async (
+  file: File,
+  onProgress?: (progress: number, message: string) => void
+): Promise<ProcessPurchasePDFResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  if (onProgress) {
+    onProgress(10, '📄 PDFからデータを抽出中...');
+  }
+
+  try {
+    const response = await apiClient.post<ProcessPurchasePDFResponse>('/process-purchase-pdf', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+
+    if (onProgress) {
+      onProgress(100, '✅ 処理完了');
+    }
+
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const savePurchaseRecord = async (
+  data: SavePurchaseRecordRequest
+): Promise<SavePurchaseRecordResponse> => {
+  const response = await apiClient.post<SavePurchaseRecordResponse>('/save-purchase-record', data);
   return response.data;
 };

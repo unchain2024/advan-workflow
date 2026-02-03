@@ -93,3 +93,53 @@ export interface RegenerateInvoiceResponse {
   invoice_url: string;
   invoice_filename: string;
 }
+
+// 仕入れ関連の型定義
+export interface PurchaseItem {
+  slip_number: string;
+  product_code: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  amount: number;
+}
+
+export interface PurchaseInvoice {
+  date: string;
+  supplier_name: string;
+  supplier_address: string;
+  slip_number: string;
+  items: PurchaseItem[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  customs_duty: number;
+  is_overseas: boolean;
+}
+
+export interface PaymentTerms {
+  supplier_name: string;
+  closing_day: string;
+  payment_day: string;
+  payment_method: string;
+}
+
+export interface ProcessPurchasePDFResponse {
+  purchase_invoice: PurchaseInvoice;
+  payment_terms: PaymentTerms | null;
+  target_year_month: string;
+  is_overseas: boolean;
+  records_count: number;
+  purchase_pdf_url: string;
+}
+
+export interface SavePurchaseRecordRequest {
+  supplier_name: string;
+  target_year_month: string;
+  purchase_invoice: PurchaseInvoice;
+}
+
+export interface SavePurchaseRecordResponse {
+  success: boolean;
+  message: string;
+}

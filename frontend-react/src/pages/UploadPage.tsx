@@ -120,7 +120,7 @@ export const UploadPage: React.FC = () => {
   return (
     <div>
       <h1 className="text-4xl font-bold text-gray-800 mb-8">
-        📄 納品書処理システム
+        📄 売上計上システム
       </h1>
 
       <h2 className="text-3xl font-semibold text-gray-700 mb-4">

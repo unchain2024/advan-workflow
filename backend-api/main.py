@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from routes import pdf, billing, config
+from routes import pdf, billing, config, purchase
 
 app = FastAPI(
     title="納品書処理システム API",
@@ -39,6 +39,7 @@ app.add_middleware(
 app.include_router(pdf.router, prefix="/api", tags=["PDF処理"])
 app.include_router(billing.router, prefix="/api", tags=["請求管理"])
 app.include_router(config.router, prefix="/api", tags=["設定"])
+app.include_router(purchase.router, prefix="/api", tags=["仕入れ管理"])
 
 # 静的ファイル（生成されたPDF）
 output_dir = Path(__file__).parent.parent / "output"

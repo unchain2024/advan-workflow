@@ -5,7 +5,8 @@ export const Sidebar: React.FC = () => {
   const location = useLocation();
 
   const navItems = [
-    { path: '/', label: '📤 納品書アップロード' },
+    { path: '/', label: '📤 売上計上' },
+    { path: '/purchase', label: '📥 仕入れ' },
     { path: '/payment', label: '💰 入金額入力' },
     { path: '/settings', label: '⚙️ 自社情報設定' },
   ];
@@ -13,7 +14,7 @@ export const Sidebar: React.FC = () => {
   return (
     <div className="w-80 bg-gray-50 border-r border-gray-200 h-screen fixed left-0 top-0 flex flex-col">
       <div className="p-6">
-        <h2 className="text-xl font-bold text-gray-800 mb-6">📄 納品書処理システム</h2>
+        <h2 className="text-xl font-bold text-gray-800 mb-6">📄 売上計上システム</h2>
 
         <nav className="space-y-2">
           {navItems.map((item) => {

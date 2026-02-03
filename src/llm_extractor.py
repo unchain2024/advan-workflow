@@ -19,7 +19,7 @@ from google.oauth2.service_account import Credentials as ServiceAccountCredentia
 from pdf2image import convert_from_path
 from PIL import Image
 
-from .config import GEMINI_API_KEY, GEMINI_MODEL, load_company_config
+from .config import GEMINI_API_KEY, GEMINI_MODEL, load_company_config, CREDENTIALS_PATH
 from .pdf_extractor import DeliveryItem, DeliveryNote
 
 # Streamlit対応
