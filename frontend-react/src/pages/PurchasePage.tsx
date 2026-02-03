@@ -18,7 +18,7 @@ export const PurchasePage: React.FC = () => {
   const [paymentTerms, setPaymentTerms] = useState<PaymentTerms | null>(null);
   const [targetYearMonth, setTargetYearMonth] = useState<string>('');
   const [isOverseas, setIsOverseas] = useState(false);
-  const [recordsCount, setRecordsCount] = useState(0);
+  const [_recordsCount, setRecordsCount] = useState(0);
   const [purchasePdfUrl, setPurchasePdfUrl] = useState('');
 
   // スプレッドシート保存状態
