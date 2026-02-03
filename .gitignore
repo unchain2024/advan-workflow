@@ -1,4 +1,7 @@
 credentials.json
+credentials.json.oauth.backup
+advan-486218-a42831c08eca.json
+*.json.backup
 token.pickle
 .env
 AUTHENTICATION_OPTIONS.md

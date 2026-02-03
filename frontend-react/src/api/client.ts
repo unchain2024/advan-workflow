@@ -14,7 +14,8 @@ import type {
   SavePurchaseRecordResponse,
 } from '../types';
 
-const API_BASE_URL = '/api';
+// 本番環境ではVITE_API_URLを使用、開発環境では/api（Viteプロキシ経由）
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
