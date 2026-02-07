@@ -13,7 +13,6 @@ company_config.json
 input
 output
 __pycache__
+*.db
 
-# Vercel
-.vercel
 .env*.local
