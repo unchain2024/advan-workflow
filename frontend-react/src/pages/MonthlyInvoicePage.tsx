@@ -1,18 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '../components/Common/Button';
 import { Message } from '../components/Common/Message';
 import { Spinner } from '../components/Common/Spinner';
 import { MetricCard } from '../components/Common/MetricCard';
-import { generateMonthlyInvoice } from '../api/client';
+import { generateMonthlyInvoice, getCompaniesAndMonths } from '../api/client';
 import type { GenerateMonthlyInvoiceResponse } from '../types';
 
 export const MonthlyInvoicePage: React.FC = () => {
   const [companyName, setCompanyName] = useState('');
   const [selectedYear, setSelectedYear] = useState('2025');
   const [selectedMonth, setSelectedMonth] = useState('3');
+  const [companies, setCompanies] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<GenerateMonthlyInvoiceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ページ読み込み時に会社名リストを取得
+  useEffect(() => {
+    getCompaniesAndMonths()
+      .then((res) => setCompanies(res.companies))
+      .catch(() => {});
+  }, []);
+
+  // 外側クリックでサジェストを閉じる
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestRef.current && !suggestRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // 入力値でフィルタリングしたサジェスト候補
+  const suggestions = companyName.trim()
+    ? companies.filter((c) => c.includes(companyName.trim()))
+    : [];
 
   // 年のリスト（2020-2030）
   const years = Array.from({ length: 11 }, (_, i) => (2020 + i).toString());
@@ -80,18 +106,39 @@ export const MonthlyInvoicePage: React.FC = () => {
         </h2>
 
         {/* 会社名入力 */}
-        <div className="mb-4">
+        <div className="mb-4 relative" ref={suggestRef}>
           <label className="block text-sm font-semibold text-gray-700 mb-2">
             会社名
           </label>
           <input
             type="text"
             value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
+            onChange={(e) => {
+              setCompanyName(e.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => setShowSuggestions(true)}
             placeholder="例: 株式会社サンプル"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
             disabled={isLoading}
           />
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+              {suggestions.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className="w-full text-left px-4 py-2 hover:bg-gray-100 text-gray-800"
+                  onClick={() => {
+                    setCompanyName(name);
+                    setShowSuggestions(false);
+                  }}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 年月選択 */}
