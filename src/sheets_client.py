@@ -132,7 +132,7 @@ class GoogleSheetsClient:
                         pass
 
                 if not streamlit_secrets_available:
-                    # 環境変数からBase64エンコードされたcredentialsを読み込む（Vercel対応）
+                    # 環境変数からBase64エンコードされたcredentialsを読み込む（Render対応）
                     credentials_base64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
                     if credentials_base64:
                         try:
@@ -158,7 +158,7 @@ class GoogleSheetsClient:
         """OAuth 2.0 認証情報を取得（本番環境対応）"""
         credentials = None
 
-        # 環境変数からBase64エンコードされたトークンを読み込む（Vercel対応）
+        # 環境変数からBase64エンコードされたトークンを読み込む（Render対応）
         token_base64 = os.getenv("GOOGLE_TOKEN_BASE64")
         print(f"[DEBUG Sheets] GOOGLE_TOKEN_BASE64 exists: {token_base64 is not None}")
         print(f"[DEBUG Sheets] GOOGLE_TOKEN_BASE64 length: {len(token_base64) if token_base64 else 0}")

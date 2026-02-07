@@ -14,6 +14,4 @@ input
 output
 __pycache__
 
-# Vercel
-.vercel
 .env*.local
