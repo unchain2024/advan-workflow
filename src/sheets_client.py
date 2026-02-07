@@ -336,10 +336,6 @@ class GoogleSheetsClient:
             PreviousBilling: 前月の請求情報
         """
         try:
-            sheet = self.client.open_by_key(BILLING_SPREADSHEET_ID).worksheet(
-                BILLING_SHEET_NAME
-            )
-
             # 前月を計算
             if current_year_month:
                 year, month = map(int, current_year_month.split('-'))
@@ -356,8 +352,17 @@ class GoogleSheetsClient:
             prev_year_month = f"{prev_year}年{prev_month}月"
             current_year_month_str = f"{year}年{month}月"
 
-            # 1. 会社の行を検索
-            col_a_values = sheet.col_values(1)
+            # 年に基づいてシートを取得
+            current_sheet = self._get_billing_sheet_by_year(year)
+
+            # 前月が前年の場合は別のシートを取得
+            if prev_year != year:
+                prev_sheet = self._get_billing_sheet_by_year(prev_year)
+            else:
+                prev_sheet = current_sheet
+
+            # 1. 会社の行を検索（今月のシートで）
+            col_a_values = current_sheet.col_values(1)
             normalized_search = normalize_company_name(company_name)
 
             company_row = None
@@ -371,17 +376,29 @@ class GoogleSheetsClient:
                 print(f"    会社 '{company_name}' が売上集計表に見つかりません")
                 return PreviousBilling(0, 0, 0, 0, 0, 0)
 
-            # 2. 前月の列を検索
-            row1_values = sheet.row_values(1)
+            # 2. 前月の列を検索（前月のシートで）
+            prev_row1_values = prev_sheet.row_values(1)
             prev_month_col = None
-            for i, cell_value in enumerate(row1_values):
+            for i, cell_value in enumerate(prev_row1_values):
                 if prev_year_month in str(cell_value):
                     prev_month_col = i + 1
                     break
 
-            # 3. 今月の列を検索
+            # 前月が別シートの場合、会社の行を再検索
+            prev_company_row = company_row
+            if prev_year != year:
+                prev_col_a = prev_sheet.col_values(1)
+                prev_company_row = None
+                for i, cell_value in enumerate(prev_col_a[2:], start=3):
+                    normalized_cell = normalize_company_name(str(cell_value))
+                    if normalized_search in normalized_cell or normalized_cell in normalized_search:
+                        prev_company_row = i
+                        break
+
+            # 3. 今月の列を検索（今月のシートで）
+            current_row1_values = current_sheet.row_values(1)
             current_month_col = None
-            for i, cell_value in enumerate(row1_values):
+            for i, cell_value in enumerate(current_row1_values):
                 if current_year_month_str in str(cell_value):
                     current_month_col = i + 1
                     break
@@ -399,16 +416,16 @@ class GoogleSheetsClient:
 
             # 前回御請求額 = 前月の残高
             previous_amount = 0
-            if prev_month_col:
+            if prev_month_col and prev_company_row:
                 zandaka_col = prev_month_col + 3  # 残高は年月列+3
-                prev_zandaka = sheet.cell(company_row, zandaka_col).value or ""
+                prev_zandaka = prev_sheet.cell(prev_company_row, zandaka_col).value or ""
                 previous_amount = parse_amount(prev_zandaka)
 
             # 御入金額 = 今月の消滅（入金額）
             payment_received = 0
             if current_month_col:
                 shoumetsu_col = current_month_col + 2  # 消滅は年月列+2
-                current_shoumetsu = sheet.cell(company_row, shoumetsu_col).value or ""
+                current_shoumetsu = current_sheet.cell(company_row, shoumetsu_col).value or ""
                 payment_received = parse_amount(current_shoumetsu)
 
             # 差引繰越残高 = 前回御請求額 - 御入金額
@@ -432,6 +449,18 @@ class GoogleSheetsClient:
             import traceback
             traceback.print_exc()
             return PreviousBilling(0, 0, 0, 0, 0, 0)
+
+    def _get_billing_sheet_by_year(self, year: int):
+        """年に基づいて売上集計表のシートを取得
+
+        Args:
+            year: 年（例: 2025）
+
+        Returns:
+            gspread.Worksheet: 対応するシート
+        """
+        sheet_name = str(year)
+        return self.client.open_by_key(BILLING_SPREADSHEET_ID).worksheet(sheet_name)
 
     def _parse_year_month(self, date_str: str) -> str:
         """日付文字列をYYYY年M月形式に変換
@@ -469,15 +498,15 @@ class GoogleSheetsClient:
         3. Column Aから会社名（正規化して一致）の行を検索
         4. 「発生」と「消費税」のセルを更新
         """
-        sheet = self.client.open_by_key(BILLING_SPREADSHEET_ID).worksheet(
-            BILLING_SHEET_NAME
-        )
-
         # 1. 日付から年月を取得
         target_year_month = self._parse_year_month(delivery_note.date)
         if not target_year_month:
             print(f"    エラー: 日付のパースに失敗しました: {delivery_note.date}")
             return
+
+        # 日付から年を抽出してシートを選択
+        target_year = int(delivery_note.date.split('/')[0])
+        sheet = self._get_billing_sheet_by_year(target_year)
 
         # 2. Row 1から年月の列を検索
         row1_values = sheet.row_values(1)

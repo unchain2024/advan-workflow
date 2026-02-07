@@ -81,6 +81,11 @@ PURCHASE_EXTRACTION_PROMPT = """
     - 消費税が0円の場合は true の可能性が高い
     - それ以外は false
 
+11. **is_return（返品フラグ）**: 返品伝票かどうかを判定してください（真偽値）。
+    - テキストに「返品」「返却」「RETURN」などのキーワードが含まれる場合は true
+    - 通常の納品書の場合は false
+    - **重要**: 返品の場合、金額は正の数で記載されていても、後で自動的にマイナスに変換されます
+
 **出力形式（JSON）:**
 ```json
 {
@@ -102,7 +107,8 @@ PURCHASE_EXTRACTION_PROMPT = """
   "tax": 0,
   "total": 10000,
   "customs_duty": 0,
-  "is_overseas": true
+  "is_overseas": true,
+  "is_return": false
 }
 ```
 
@@ -111,7 +117,7 @@ PURCHASE_EXTRACTION_PROMPT = """
 
 
 class PurchaseExtractor(LLMExtractor):
-    """仕入れ納品書抽出クラス（Vision API + Geminiを使用）"""
+    """仕入れ納品書抽出クラス（Geminiに直接画像を送信）"""
 
     def extract_from_pdf(self, pdf_path: str) -> Optional[PurchaseInvoice]:
         """PDFから仕入れ納品書データを抽出
@@ -123,37 +129,51 @@ class PurchaseExtractor(LLMExtractor):
             PurchaseInvoice: 抽出されたデータ、失敗時はNone
         """
         from pathlib import Path
+        from io import BytesIO
+        from google.genai import types
 
         try:
             # PDFを画像に変換
             images = self._pdf_to_images(Path(pdf_path))
+            print(f"  PDF → {len(images)} ページの画像に変換")
 
-            # 各ページからOCRでテキスト抽出
-            all_text = []
-            for i, image in enumerate(images):
-                text = self._extract_text_with_vision(image)
-                print(f"\n=== ページ {i + 1} OCR結果 ===")
-                print(f"抽出文字数: {len(text)} 文字")
-                all_text.append(f"--- ページ {i + 1} ---\n{text}")
-
-            # 全ページのテキストを結合
-            combined_text = "\n\n".join(all_text)
-            print(f"\n=== 合計テキスト ===")
-            print(f"合計文字数: {len(combined_text)} 文字")
-
-            # Geminiで構造化抽出（仕入れ用プロンプト）
-            print(f"\n=== Gemini APIに送信中（仕入れ抽出） ===")
-            result_data = self._extract_purchase_with_gemini(combined_text)
+            # Geminiに直接画像を送信して構造化抽出
+            print(f"\n=== Gemini APIに画像を直接送信中（仕入れ抽出） ===")
+            result_data = self._extract_purchase_with_gemini(images)
 
             if not result_data:
                 print("    エラー: Gemini抽出に失敗")
                 return None
 
+            # 返品フラグを取得
+            is_return = result_data.get("is_return", False)
+
             # PurchaseInvoiceオブジェクトに変換
-            items = [
-                PurchaseItem(**item_data)
-                for item_data in result_data.get("items", [])
-            ]
+            items = []
+            for item_data in result_data.get("items", []):
+                amount = item_data.get("amount", 0)
+                # 返品の場合、金額を強制的にマイナスに
+                if is_return and amount > 0:
+                    amount = -amount
+                    item_data["amount"] = amount
+                items.append(PurchaseItem(**item_data))
+
+            # 金額を取得
+            subtotal = result_data.get("subtotal", 0)
+            tax = result_data.get("tax", 0)
+            total = result_data.get("total", 0)
+            customs_duty = result_data.get("customs_duty", 0)
+
+            # 返品の場合、金額をマイナスに
+            if is_return:
+                if subtotal > 0:
+                    subtotal = -subtotal
+                if tax > 0:
+                    tax = -tax
+                if total > 0:
+                    total = -total
+                if customs_duty > 0:
+                    customs_duty = -customs_duty
 
             invoice = PurchaseInvoice(
                 date=result_data.get("date", ""),
@@ -161,10 +181,10 @@ class PurchaseExtractor(LLMExtractor):
                 supplier_address=result_data.get("supplier_address", ""),
                 slip_number=result_data.get("slip_number", ""),
                 items=items,
-                subtotal=result_data.get("subtotal", 0),
-                tax=result_data.get("tax", 0),
-                total=result_data.get("total", 0),
-                customs_duty=result_data.get("customs_duty", 0),
+                subtotal=subtotal,
+                tax=tax,
+                total=total,
+                customs_duty=customs_duty,
                 is_overseas=result_data.get("is_overseas", False),
             )
 
@@ -182,18 +202,31 @@ class PurchaseExtractor(LLMExtractor):
             traceback.print_exc()
             return None
 
-    def _extract_purchase_with_gemini(self, text: str) -> Optional[dict]:
-        """Geminiでテキストから仕入れ納品書の構造化データを抽出"""
+    def _extract_purchase_with_gemini(self, images) -> Optional[dict]:
+        """Geminiに画像を直接送信して仕入れ納品書の構造化データを抽出"""
         import json
+        from io import BytesIO
+        from google.genai import types
 
         try:
-            # プロンプトにテキストを埋め込む
-            full_prompt = f"{PURCHASE_EXTRACTION_PROMPT}\n\n# 仕入れ納品書テキスト\n\n{text}"
+            # 画像パーツを作成
+            contents = []
+            for image in images:
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                image_part = types.Part.from_bytes(
+                    data=buffer.getvalue(),
+                    mime_type="image/png",
+                )
+                contents.append(image_part)
+
+            # プロンプトを追加
+            contents.append(PURCHASE_EXTRACTION_PROMPT)
 
             # Gemini APIに送信
             response = self.gemini_client.models.generate_content(
                 model=self.model,
-                contents=full_prompt
+                contents=contents,
             )
             response_text = response.text
 

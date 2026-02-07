@@ -126,8 +126,8 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
         output_dir = Path(__file__).parent.parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
 
-        safe_supplier_name = purchase_invoice.supplier_name.replace("/", "_").replace("\\", "_")
-        date_str = purchase_invoice.date.replace("/", "") if purchase_invoice.date else ""
+        safe_supplier_name = (purchase_invoice.supplier_name or "unknown").replace("/", "_").replace("\\", "_")
+        date_str = (purchase_invoice.date or "").replace("/", "")
         purchase_filename = f"purchase_{safe_supplier_name}_{date_str}.pdf"
         purchase_path = output_dir / purchase_filename
 

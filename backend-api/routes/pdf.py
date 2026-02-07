@@ -107,6 +107,13 @@ async def process_pdf(file: UploadFile = File(...)):
         extractor = LLMExtractor()
         delivery_note = extractor.extract(tmp_path)
 
+        # 会社名がNoneの場合はエラーを返す
+        if not delivery_note.company_name:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "会社名を抽出できませんでした。PDFの内容を確認してください。"}
+            )
+
         # 2. 納品書PDFをoutputディレクトリに保存
         output_dir = Path(__file__).parent.parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
@@ -144,6 +151,19 @@ async def process_pdf(file: UploadFile = File(...)):
             previous_billing=previous_billing,
             output_path=invoice_path,
         )
+
+        # 6. 月次明細DBに保存
+        from src.database import MonthlyItemsDB
+        from src.utils import parse_year_month
+
+        year_month_str = parse_year_month(delivery_note.date)
+        if year_month_str:
+            db = MonthlyItemsDB()
+            db.save_monthly_items(
+                company_name=delivery_note.company_name,
+                year_month=year_month_str,
+                delivery_note=delivery_note,
+            )
 
         # レスポンス作成（キャッシュバスティング用にタイムスタンプ追加）
         timestamp = int(time.time())
@@ -381,3 +401,120 @@ async def pdf_to_images(filename: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"画像変換エラー: {str(e)}")
+
+
+class GenerateMonthlyInvoiceRequest(BaseModel):
+    company_name: str
+    year_month: str  # 「YYYY年M月」形式
+
+
+class GenerateMonthlyInvoiceResponse(BaseModel):
+    invoice_url: str
+    invoice_filename: str
+    delivery_notes_count: int
+    total_subtotal: int
+    total_tax: int
+    total_amount: int
+    items_count: int
+    delivery_notes: list[str]  # 伝票番号のリスト
+
+
+@router.post("/generate-monthly-invoice", response_model=GenerateMonthlyInvoiceResponse)
+async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
+    """月次請求書を生成
+
+    指定した会社・年月の集約済みデータから月次請求書PDFを生成します。
+    """
+    try:
+        # 1. 月次明細DBからデータ取得
+        from src.database import MonthlyItemsDB
+
+        db = MonthlyItemsDB()
+        delivery_notes = db.get_monthly_items(
+            company_name=request.company_name,
+            year_month=request.year_month,
+        )
+
+        if not delivery_notes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"指定した会社・年月のデータが見つかりません: {request.company_name} ({request.year_month})"
+            )
+
+        # 2. 会社情報取得
+        sheets_client = GoogleSheetsClient()
+        company_info = sheets_client.get_company_info(request.company_name)
+
+        # 3. 前月の請求情報を取得
+        # 年月を "YYYY-MM" 形式に変換
+        import re
+        match = re.match(r'(\d+)年(\d+)月', request.year_month)
+        if match:
+            year = match.group(1)
+            month = match.group(2)
+            year_month_dash = f"{year}-{month.zfill(2)}"
+        else:
+            year_month_dash = ""
+
+        previous_billing = sheets_client.get_previous_billing(
+            request.company_name,
+            year_month_dash,
+        )
+
+        # 4. 月次請求書PDF生成
+        invoice_generator = InvoiceGenerator()
+
+        # outputディレクトリに保存
+        output_dir = Path(__file__).parent.parent.parent / "output"
+        output_dir.mkdir(exist_ok=True)
+
+        safe_company_name = request.company_name.replace("/", "_").replace("\\", "_")
+        # "2025年3月" → "2025_03"
+        year_month_safe = request.year_month.replace("年", "_").replace("月", "")
+        invoice_filename = f"monthly_invoice_{safe_company_name}_{year_month_safe}.pdf"
+        invoice_path = output_dir / invoice_filename
+
+        # 古いPDFファイルを削除（キャッシュ対策）
+        if invoice_path.exists():
+            invoice_path.unlink()
+
+        invoice_generator.generate_monthly(
+            delivery_notes=delivery_notes,
+            company_name=request.company_name,
+            year_month=request.year_month,
+            company_info=company_info,
+            previous_billing=previous_billing,
+            output_path=invoice_path,
+        )
+
+        # 5. レスポンス作成
+        total_subtotal = sum(note.subtotal for note in delivery_notes)
+        total_tax = sum(note.tax for note in delivery_notes)
+        total_amount = total_subtotal + total_tax
+        items_count = sum(len(note.items) for note in delivery_notes)
+        slip_numbers = [note.slip_number for note in delivery_notes if note.slip_number]
+
+        timestamp = int(time.time())
+        invoice_url = f"/output/{invoice_filename}?t={timestamp}"
+
+        return GenerateMonthlyInvoiceResponse(
+            invoice_url=invoice_url,
+            invoice_filename=invoice_filename,
+            delivery_notes_count=len(delivery_notes),
+            total_subtotal=total_subtotal,
+            total_tax=total_tax,
+            total_amount=total_amount,
+            items_count=items_count,
+            delivery_notes=slip_numbers,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_detail = {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+        print(f"ERROR in generate_monthly_invoice: {error_detail}")
+        raise HTTPException(status_code=500, detail=error_detail)

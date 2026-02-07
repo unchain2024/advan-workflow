@@ -143,3 +143,20 @@ export interface SavePurchaseRecordResponse {
   success: boolean;
   message: string;
 }
+
+// 月次請求書生成関連の型定義
+export interface GenerateMonthlyInvoiceRequest {
+  company_name: string;
+  year_month: string;
+}
+
+export interface GenerateMonthlyInvoiceResponse {
+  invoice_url: string;
+  invoice_filename: string;
+  delivery_notes_count: number;
+  total_subtotal: number;
+  total_tax: number;
+  total_amount: number;
+  items_count: number;
+  delivery_notes: string[];
+}

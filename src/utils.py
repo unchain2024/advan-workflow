@@ -1,6 +1,7 @@
 """ユーティリティ関数"""
 from datetime import datetime
 from typing import Optional
+import calendar
 
 
 def calculate_target_month(delivery_date: str, closing_day: str) -> str:
@@ -79,4 +80,28 @@ def parse_year_month(date_str: str) -> str:
         year = int(parts[0])
         month = int(parts[1])
         return f"{year}年{month}月"
+    return ""
+
+
+def get_month_end_date(year_month: str) -> str:
+    """年月文字列から月末日を計算してYYYY/MM/DD形式で返す
+
+    Args:
+        year_month: 年月文字列（「2025年3月」形式）
+
+    Returns:
+        str: 月末日（YYYY/MM/DD形式、例: "2025/03/31"）
+    """
+    try:
+        # "2025年3月" → 2025, 3 を抽出
+        year_month = year_month.replace("年", "/").replace("月", "")
+        parts = year_month.split('/')
+        if len(parts) >= 2:
+            year = int(parts[0])
+            month = int(parts[1])
+            # 月末日を取得
+            last_day = calendar.monthrange(year, month)[1]
+            return f"{year}/{month:02d}/{last_day:02d}"
+    except (ValueError, IndexError):
+        pass
     return ""

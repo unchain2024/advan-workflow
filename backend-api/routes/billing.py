@@ -2,9 +2,20 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import re
+
 from src.sheets_client import GoogleSheetsClient, PreviousBilling, normalize_company_name
 from src.pdf_extractor import DeliveryNote, DeliveryItem
-from src.config import BILLING_SPREADSHEET_ID, BILLING_SHEET_NAME
+from src.config import BILLING_SPREADSHEET_ID
+
+
+def _extract_year_from_year_month(year_month: str) -> int:
+    """年月文字列から年を抽出（例: '2025年3月' → 2025）"""
+    match = re.match(r'(\d{4})', year_month)
+    if match:
+        return int(match.group(1))
+    from datetime import datetime
+    return datetime.now().year
 
 router = APIRouter()
 
@@ -125,9 +136,8 @@ async def update_payment(request: UpdatePaymentRequest):
 
     try:
         sheets_client = GoogleSheetsClient()
-        sheet = sheets_client.client.open_by_key(BILLING_SPREADSHEET_ID).worksheet(
-            BILLING_SHEET_NAME
-        )
+        year = _extract_year_from_year_month(request.year_month)
+        sheet = sheets_client._get_billing_sheet_by_year(year)
 
         # 年月の列を検索
         row1_values = sheet.row_values(1)
@@ -204,13 +214,13 @@ async def update_payment(request: UpdatePaymentRequest):
 
 @router.get("/companies-and-months", response_model=CompaniesAndMonthsResponse)
 async def get_companies_and_months():
-    """会社リストと年月リストを取得"""
+    """会社リストと年月リストを取得（現在の年のシートから）"""
 
     try:
+        from datetime import datetime
         sheets_client = GoogleSheetsClient()
-        sheet = sheets_client.client.open_by_key(BILLING_SPREADSHEET_ID).worksheet(
-            BILLING_SHEET_NAME
-        )
+        current_year = datetime.now().year
+        sheet = sheets_client._get_billing_sheet_by_year(current_year)
 
         # 会社リスト（A列）- 重複を除去
         col_a = sheet.col_values(1)
@@ -247,13 +257,13 @@ async def get_companies_and_months():
 
 @router.get("/billing-table", response_model=BillingTableResponse)
 async def get_billing_table():
-    """売上集計表のデータを取得"""
+    """売上集計表のデータを取得（現在の年のシートから）"""
 
     try:
+        from datetime import datetime
         sheets_client = GoogleSheetsClient()
-        sheet = sheets_client.client.open_by_key(BILLING_SPREADSHEET_ID).worksheet(
-            BILLING_SHEET_NAME
-        )
+        current_year = datetime.now().year
+        sheet = sheets_client._get_billing_sheet_by_year(current_year)
 
         # 全ての行を取得
         data = sheet.get_all_values()

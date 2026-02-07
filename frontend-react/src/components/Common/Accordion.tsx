@@ -16,6 +16,7 @@ export const Accordion: React.FC<AccordionProps> = ({
   return (
     <div className="border border-gray-200 rounded-lg mb-2">
       <button
+        type="button"
         className="w-full px-4 py-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center justify-between"
         onClick={() => setIsOpen(!isOpen)}
       >

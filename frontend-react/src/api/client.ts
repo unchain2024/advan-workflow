@@ -12,6 +12,7 @@ import type {
   ProcessPurchasePDFResponse,
   SavePurchaseRecordRequest,
   SavePurchaseRecordResponse,
+  GenerateMonthlyInvoiceResponse,
 } from '../types';
 
 // 本番環境ではVITE_API_URLを使用、開発環境では/api（Viteプロキシ経由）
@@ -128,5 +129,17 @@ export const savePurchaseRecord = async (
   data: SavePurchaseRecordRequest
 ): Promise<SavePurchaseRecordResponse> => {
   const response = await apiClient.post<SavePurchaseRecordResponse>('/save-purchase-record', data);
+  return response.data;
+};
+
+// 月次請求書生成API
+export const generateMonthlyInvoice = async (
+  companyName: string,
+  yearMonth: string
+): Promise<GenerateMonthlyInvoiceResponse> => {
+  const response = await apiClient.post<GenerateMonthlyInvoiceResponse>('/generate-monthly-invoice', {
+    company_name: companyName,
+    year_month: yearMonth,
+  });
   return response.data;
 };

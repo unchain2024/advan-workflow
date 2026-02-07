@@ -1,37 +1,22 @@
 """LLMを使った納品書データ抽出モジュール
 
-PDFから情報抽出する2段階処理：
-1. Google Cloud Vision APIでOCR（文字認識）
-2. Gemini APIで構造化（項目ごとに分解）
+PDFから情報抽出：Gemini APIに直接画像を送信して構造化データを抽出
 """
-import base64
 import json
-import os
-import pickle
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
 from google import genai
-from google.cloud import vision
-from google.oauth2.credentials import Credentials
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.genai import types
 from pdf2image import convert_from_path
 from PIL import Image
 
-from .config import GEMINI_API_KEY, GEMINI_MODEL, load_company_config, CREDENTIALS_PATH
+from .config import GEMINI_API_KEY, GEMINI_MODEL, load_company_config
 from .pdf_extractor import DeliveryItem, DeliveryNote
 
-# Streamlit対応
-try:
-    import streamlit as st
-    HAS_STREAMLIT = True
-except ImportError:
-    HAS_STREAMLIT = False
-
-
 # LLMに送るプロンプト
-EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストです。このテキストから情報をJSON形式で抽出してください。
+EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情報をJSON形式で抽出してください。
 
 ## 抽出する項目
 
@@ -55,10 +40,12 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
      * 納品書の**上部**に記載されている会社名を抽出
      * 「御中」の**直前**または**近くに**記載されている会社名
      * 「株式会社○○」「○○株式会社」などの法人格を含む会社名
-   - **除外すべきもの**:
+   - **除外すべきもの（絶対に抽出してはいけない）**:
      * 発行元・差出人の会社名は**絶対に除外**
      * 納品書の**下部**に記載されている発行元の会社名
      * 住所・電話番号の近くに記載されている会社名（発行元の可能性が高い）
+     * **「アドバンアパレル」を含む会社名は絶対に除外**（これは発行元の会社名です）
+     * **「アドバンアパレル株式会社」「株式会社アドバンアパレル」は絶対に除外**
    - company_name から「御中」「様」「殿」は除去すること
 
 3. **slip_number**: 伝票番号または納品書番号
@@ -67,7 +54,11 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
 5. **tax**: 消費税額（数値のみ、カンマなし）
 6. **total**: 合計金額（税込）（数値のみ、カンマなし）
 7. **payment_received**: 御入金額（入金額が記載されている場合、なければ0）（数値のみ、カンマなし）
-8. **items**: 明細行の配列。各行は以下の項目を含む：
+8. **is_return**: 返品伝票かどうか（boolean）
+   - テキストに「返品」「返却」「RETURN」などのキーワードが含まれる場合は true
+   - 通常の納品書の場合は false
+   - **重要**: 返品の場合、金額は正の数で記載されていても、後で自動的にマイナスに変換されます
+9. **items**: 明細行の配列。各行は以下の項目を含む：
    - **slip_number**: 伝票番号（行ごとにある場合）
    - **product_code**: 商品コード
    - **product_name**: 品名・商品名
@@ -99,6 +90,7 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
 - 日付は必ず YYYY/MM/DD 形式に変換
 - 会社名から「御中」「様」「殿」は除去
 - **company_name は必ず宛先（受取人）の会社名のみ抽出**すること（発行元の会社名は含めない）
+- **「アドバンアパレル」を含む会社名は絶対に抽出しない**（発行元の会社名）
 - テキスト上部に現れる会社名が宛先の可能性が高い
 
 ## 出力形式
@@ -112,6 +104,7 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
   "tax": 10000,
   "total": 110000,
   "payment_received": 50000,
+  "is_return": false,
   "items": [
     {
       "slip_number": "D-12345",
@@ -129,7 +122,7 @@ JSONのみを出力してください。説明は不要です。"""
 
 
 class LLMExtractor:
-    """Google Cloud Vision API + Gemini APIで納品書から情報を抽出するクラス"""
+    """Gemini APIで納品書から情報を抽出するクラス"""
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or GEMINI_API_KEY
@@ -144,87 +137,6 @@ class LLMExtractor:
 
         # Gemini Client作成
         self.gemini_client = genai.Client(api_key=self.api_key)
-        self.vision_client = self._get_vision_client()
-
-    def _get_vision_client(self):
-        """Vision APIクライアントを取得（OAuth認証またはサービスアカウント）"""
-        # Streamlit Cloudの場合はsecretsから読み込む
-        if HAS_STREAMLIT:
-            try:
-                if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-                    credentials = ServiceAccountCredentials.from_service_account_info(
-                        dict(st.secrets['gcp_service_account'])
-                    )
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-            except Exception:
-                # Streamlit が動作していない場合はスキップ
-                pass
-
-        # OAuth認証を使用するかチェック
-        use_oauth = os.getenv("USE_OAUTH", "false").lower() == "true"
-
-        if use_oauth:
-            # 環境変数からBase64エンコードされたトークンを読み込む（Vercel対応）
-            token_base64 = os.getenv("GOOGLE_TOKEN_BASE64")
-            print(f"[DEBUG] USE_OAUTH: {use_oauth}")
-            print(f"[DEBUG] GOOGLE_TOKEN_BASE64 exists: {token_base64 is not None}")
-            print(f"[DEBUG] GOOGLE_TOKEN_BASE64 length: {len(token_base64) if token_base64 else 0}")
-
-            if token_base64:
-                try:
-                    print("[DEBUG] Attempting to decode Base64 token...")
-                    token_data = base64.b64decode(token_base64)
-                    print(f"[DEBUG] Decoded token size: {len(token_data)} bytes")
-
-                    print("[DEBUG] Attempting to unpickle credentials...")
-                    credentials = pickle.loads(token_data)
-                    print("[DEBUG] Successfully loaded credentials from environment variable")
-
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-                except Exception as e:
-                    print(f"❌ 環境変数からのトークン読み込みエラー: {type(e).__name__}: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            # ファイルシステムからtoken.pickleを探す（ローカル環境）
-            base_dir = Path(__file__).parent.parent
-            token_path = base_dir / "token.pickle"
-
-            if token_path.exists():
-                with open(token_path, "rb") as token:
-                    credentials = pickle.load(token)
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-
-            raise RuntimeError(
-                "❌ OAuth認証が必要です。\n"
-                "環境変数 GOOGLE_TOKEN_BASE64 を設定するか、\n"
-                "プロジェクトルートで `python oauth_setup.py` を実行してtoken.pickleを生成してください。"
-            )
-        else:
-            # 環境変数からBase64エンコードされたcredentialsを読み込む（Vercel対応）
-            credentials_base64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
-            if credentials_base64:
-                try:
-                    credentials_data = base64.b64decode(credentials_base64)
-                    credentials_info = json.loads(credentials_data)
-                    credentials = ServiceAccountCredentials.from_service_account_info(credentials_info)
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-                except Exception as e:
-                    print(f"環境変数からのcredentials読み込みエラー: {e}")
-
-            # ファイルシステムからcredentials.jsonを使用（ローカル環境）
-            credentials_path = CREDENTIALS_PATH
-            if credentials_path.exists():
-                credentials = ServiceAccountCredentials.from_service_account_file(
-                    str(credentials_path)
-                )
-                return vision.ImageAnnotatorClient(credentials=credentials)
-
-            raise RuntimeError(
-                f"❌ 認証情報が見つかりません。\n"
-                f"環境変数 GOOGLE_CREDENTIALS_BASE64 を設定するか、\n"
-                f"credentials.jsonを {credentials_path} に配置してください。"
-            )
 
     def extract(self, pdf_path: Path) -> DeliveryNote:
         """PDFから納品書データを抽出
@@ -237,24 +149,11 @@ class LLMExtractor:
         """
         # PDFを画像に変換
         images = self._pdf_to_images(pdf_path)
+        print(f"  PDF → {len(images)} ページの画像に変換")
 
-        # 各ページからOCRでテキスト抽出
-        all_text = []
-        for i, image in enumerate(images):
-            text = self._extract_text_with_vision(image)
-            print(f"\n=== ページ {i + 1} OCR結果 ===")
-            print(f"抽出文字数: {len(text)} 文字")
-            print(f"先頭200文字: {text[:200]}")
-            all_text.append(f"--- ページ {i + 1} ---\n{text}")
-
-        # 全ページのテキストを結合
-        combined_text = "\n\n".join(all_text)
-        print(f"\n=== 合計テキスト ===")
-        print(f"合計文字数: {len(combined_text)} 文字")
-
-        # Geminiで構造化抽出
-        print(f"\n=== Gemini APIに送信中 ===")
-        extracted = self._extract_with_gemini(combined_text)
+        # Geminiに直接画像を送信して構造化抽出
+        print(f"\n=== Gemini APIに画像を直接送信中 ===")
+        extracted = self._extract_with_gemini(images)
         print(f"Gemini応答: {extracted}")
 
         if not extracted:
@@ -285,10 +184,29 @@ class LLMExtractor:
             own_company = load_company_config()
             own_company_name = own_company.get("company_name", "")
 
-            # 自社名が含まれている場合は除外
-            if own_company_name and own_company_name in company_name:
-                print(f"警告: 自社名が会社名として検出されました: {company_name}")
-                company_name = ""  # 空にする
+            if own_company_name:
+                # 正規化して比較（法人格を除去）
+                def normalize_for_filtering(name: str) -> str:
+                    """フィルタリング用に会社名を正規化（法人格等を除去）"""
+                    import re
+                    # 法人格を除去
+                    name = re.sub(r'株式会社|有限会社|合同会社|合資会社|合名会社', '', name)
+                    # 敬称を除去
+                    name = re.sub(r'御中|様|殿', '', name)
+                    # 空白を除去
+                    name = name.replace(' ', '').replace('　', '')
+                    return name.strip()
+
+                normalized_own = normalize_for_filtering(own_company_name)
+                normalized_extracted = normalize_for_filtering(company_name)
+
+                # 双方向チェック：どちらかが他方に含まれている場合は除外
+                if (normalized_own and normalized_extracted and
+                    (normalized_own in normalized_extracted or
+                     normalized_extracted in normalized_own)):
+                    print(f"警告: 自社名が会社名として検出されました: {company_name}")
+                    print(f"  正規化後: 自社名='{normalized_own}' vs 抽出='{normalized_extracted}'")
+                    company_name = ""  # 空にする
 
         # データを整形
         merged_data = {
@@ -299,6 +217,7 @@ class LLMExtractor:
             "tax": extracted.get("tax", 0),
             "total": extracted.get("total", 0),
             "payment_received": extracted.get("payment_received", 0),
+            "is_return": extracted.get("is_return", False),
         }
         all_items = extracted.get("items", [])
 
@@ -313,57 +232,27 @@ class LLMExtractor:
         )
         return images
 
-    def _image_to_base64(self, image: Image.Image) -> str:
-        """PIL ImageをBase64エンコード"""
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        return base64.standard_b64encode(buffer.getvalue()).decode("utf-8")
-
-    def _extract_text_with_vision(self, image: Image.Image) -> str:
-        """Google Cloud Vision APIで画像からテキストを抽出"""
+    def _extract_with_gemini(self, images: list[Image.Image]) -> Optional[dict]:
+        """Geminiに画像を直接送信して構造化データを抽出"""
         try:
-            print("  Vision API呼び出し中...")
-            # PIL ImageをバイトデータとしてVision APIに送信
-            buffer = BytesIO()
-            image.save(buffer, format="PNG")
-            content = buffer.getvalue()
-            print(f"  画像サイズ: {len(content)} バイト")
+            # 画像パーツを作成
+            contents = []
+            for image in images:
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                image_part = types.Part.from_bytes(
+                    data=buffer.getvalue(),
+                    mime_type="image/png",
+                )
+                contents.append(image_part)
 
-            vision_image = vision.Image(content=content)
-            response = self.vision_client.document_text_detection(image=vision_image)
-
-            # レスポンスの詳細をデバッグ出力
-            print(f"  Response type: {type(response)}")
-            print(f"  Has error: {bool(response.error.message) if hasattr(response, 'error') else 'No error field'}")
-            print(f"  Has full_text_annotation: {hasattr(response, 'full_text_annotation')}")
-
-            if hasattr(response, 'full_text_annotation') and response.full_text_annotation:
-                print(f"  full_text_annotation.text length: {len(response.full_text_annotation.text) if response.full_text_annotation.text else 0}")
-
-            if response.error.message:
-                raise Exception(f"Vision API エラー: {response.error.message}")
-
-            # 全テキストを取得
-            text = response.full_text_annotation.text if response.full_text_annotation else ""
-            print(f"  Vision API成功: {len(text)} 文字抽出")
-            return text
-
-        except Exception as e:
-            print(f"Vision API エラー: {e}")
-            import traceback
-            traceback.print_exc()
-            return ""
-
-    def _extract_with_gemini(self, text: str) -> Optional[dict]:
-        """Geminiでテキストから構造化データを抽出"""
-        try:
-            # プロンプトにテキストを埋め込む
-            full_prompt = f"{EXTRACTION_PROMPT}\n\n# 納品書テキスト\n\n{text}"
+            # プロンプトを追加
+            contents.append(EXTRACTION_PROMPT)
 
             # Gemini APIに送信
             response = self.gemini_client.models.generate_content(
                 model=self.model,
-                contents=full_prompt
+                contents=contents,
             )
             response_text = response.text
 
@@ -391,8 +280,16 @@ class LLMExtractor:
 
     def _to_delivery_note(self, data: dict, items_data: list) -> DeliveryNote:
         """辞書データをDeliveryNoteオブジェクトに変換"""
+        # 返品フラグを取得
+        is_return = data.get("is_return", False)
+
         items = []
         for item in items_data:
+            amount = int(item.get("amount", 0) or 0)
+            # 返品の場合、金額を強制的にマイナスに
+            if is_return and amount > 0:
+                amount = -amount
+
             items.append(
                 DeliveryItem(
                     slip_number=str(item.get("slip_number", "")),
@@ -400,7 +297,7 @@ class LLMExtractor:
                     product_name=str(item.get("product_name", "")),
                     quantity=int(item.get("quantity", 0) or 0),
                     unit_price=int(item.get("unit_price", 0) or 0),
-                    amount=int(item.get("amount", 0) or 0),
+                    amount=amount,
                 )
             )
 
@@ -408,21 +305,29 @@ class LLMExtractor:
         tax = int(data.get("tax", 0) or 0)
         total = int(data.get("total", 0) or 0)
 
+        # 返品の場合、小計・消費税・合計をマイナスに
+        if is_return:
+            if subtotal > 0:
+                subtotal = -subtotal
+            if tax > 0:
+                tax = -tax
+            if total > 0:
+                total = -total
+
         # 納品書の金額は「税抜き価格」が記載されている前提で計算
         # パターン1: subtotal（税抜き）のみ記載されている場合
-        if subtotal > 0 and tax == 0:
+        if subtotal != 0 and tax == 0:
             tax = int(subtotal * 0.1)
-            if total == 0:
-                total = subtotal + tax
+            total = subtotal + tax
 
         # パターン2: total のみ記載されている場合、それを税抜き価格として扱う
-        elif total > 0 and subtotal == 0 and tax == 0:
+        elif total != 0 and subtotal == 0 and tax == 0:
             subtotal = total
             tax = int(subtotal * 0.1)
             total = subtotal + tax
 
         # パターン3: total が記載されていないが、subtotal と tax がある場合
-        elif subtotal > 0 and tax > 0 and total == 0:
+        elif subtotal != 0 and tax != 0 and total == 0:
             total = subtotal + tax
 
         return DeliveryNote(

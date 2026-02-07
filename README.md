@@ -2,6 +2,51 @@
 
 納品書PDFを画像として読み取り、Google Vision API + Gemini APIでOCR+構造化を行い、請求書PDFを自動生成するスクリプト。
 
+## Quick Start
+
+### 最小限のセットアップで起動
+
+```bash
+# 0. システムパッケージをインストール（PDF処理用）
+# Ubuntu/Debian:
+sudo apt-get install poppler-utils
+# macOS:
+# brew install poppler
+
+# 1. 依存パッケージインストール
+pip install -r requirements.txt
+
+# 2. 環境変数設定
+cp .env.example .env
+# .envファイルを編集してAPIキーとスプレッドシートIDを設定
+
+# 3. Google認証設定
+# credentials.jsonをプロジェクトルートに配置
+# （詳細は「セットアップ」セクション参照）
+
+# 4. CLIツールで納品書を処理
+python -m src.main input/your_pdf.pdf
+```
+
+### Webアプリケーションを起動（オプション）
+
+```bash
+# バックエンドAPI起動
+cd backend-api
+python main.py
+or
+uvicorn backend-api.main:app --reload --port 8000
+# → http://localhost:8000 でAPIが起動
+
+# フロントエンド起動（別ターミナル）
+cd frontend-react
+npm install
+npm run dev
+# → http://localhost:5173 でフロントエンドが起動
+```
+
+詳細なセットアップ手順は下記の「セットアップ」セクションを参照してください。
+
 ## 処理フロー
 
 ```
