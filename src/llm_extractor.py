@@ -316,19 +316,18 @@ class LLMExtractor:
 
         # 納品書の金額は「税抜き価格」が記載されている前提で計算
         # パターン1: subtotal（税抜き）のみ記載されている場合
-        if subtotal > 0 and tax == 0:
+        if subtotal != 0 and tax == 0:
             tax = int(subtotal * 0.1)
-            if total == 0:
-                total = subtotal + tax
+            total = subtotal + tax
 
         # パターン2: total のみ記載されている場合、それを税抜き価格として扱う
-        elif total > 0 and subtotal == 0 and tax == 0:
+        elif total != 0 and subtotal == 0 and tax == 0:
             subtotal = total
             tax = int(subtotal * 0.1)
             total = subtotal + tax
 
         # パターン3: total が記載されていないが、subtotal と tax がある場合
-        elif subtotal > 0 and tax > 0 and total == 0:
+        elif subtotal != 0 and tax != 0 and total == 0:
             total = subtotal + tax
 
         return DeliveryNote(
