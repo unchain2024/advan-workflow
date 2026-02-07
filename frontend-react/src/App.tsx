@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout/Layout';
 import { UploadPage } from './pages/UploadPage';
+import { MonthlyInvoicePage } from './pages/MonthlyInvoicePage';
 import { PurchasePage } from './pages/PurchasePage';
 import { PaymentPage } from './pages/PaymentPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -16,6 +17,7 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<UploadPage />} />
+          <Route path="/monthly-invoice" element={<MonthlyInvoicePage />} />
           <Route path="/purchase" element={<PurchasePage />} />
           <Route path="/payment" element={<PaymentPage />} />
           <Route path="/settings" element={<SettingsPage />} />

@@ -24,7 +24,7 @@ export const EditForm: React.FC<EditFormProps> = ({
   onRegenerate,
   onCancel,
 }) => {
-  const { register, handleSubmit, watch } = useForm({
+  const { register, watch, setValue, getValues } = useForm({
     defaultValues: {
       date: deliveryNote.date,
       company_name: deliveryNote.company_name,
@@ -44,7 +44,64 @@ export const EditForm: React.FC<EditFormProps> = ({
   const datePattern = /^(20\d{2})\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
   const isDateValid = datePattern.test(dateValue);
 
-  const onSubmit = async (data: any) => {
+  // Watch all fields for calculation checks
+  const watchedItems = watch('items');
+  const watchedSubtotal = watch('subtotal');
+  const watchedTax = watch('tax');
+
+  // Item-level: expected amount = quantity × unit_price
+  const itemExpected = !watchedItems ? [] : watchedItems.map((item: any) => {
+    const qty = Number(item.quantity) || 0;
+    const price = Number(item.unit_price) || 0;
+    const actual = Number(item.amount) || 0;
+    const expected = qty * price;
+    return { expected, mismatch: expected !== actual };
+  });
+
+  // Subtotal-level: expected = sum of all item amounts
+  const subtotalSum = !watchedItems ? 0 : watchedItems.reduce((acc: number, item: any) => acc + (Number(item.amount) || 0), 0);
+  const subtotalExpected = { expected: subtotalSum, mismatch: subtotalSum !== (Number(watchedSubtotal) || 0) };
+
+  // Tax-level: expected = Math.floor(subtotal * 0.1)
+  const taxExp = Math.floor((Number(watchedSubtotal) || 0) * 0.1);
+  const taxExpected = { expected: taxExp, mismatch: taxExp !== (Number(watchedTax) || 0) };
+
+  const [validationError, setValidationError] = useState(false);
+
+  const handleClick = async () => {
+    // 1. 現在のフォーム値を直接取得
+    const data = getValues();
+
+    // 2. 計算チェック（一番最初）
+    const items = data.items || [];
+    let hasError = false;
+
+    for (const item of items) {
+      const expected = Number(item.quantity) * Number(item.unit_price);
+      if (expected !== Number(item.amount)) {
+        hasError = true;
+        break;
+      }
+    }
+
+    if (!hasError) {
+      const sumAmounts = items.reduce((acc: number, item: any) => acc + Number(item.amount), 0);
+      if (sumAmounts !== Number(data.subtotal)) hasError = true;
+    }
+
+    if (!hasError) {
+      const expectedTax = Math.floor(Number(data.subtotal) * 0.1);
+      if (expectedTax !== Number(data.tax)) hasError = true;
+    }
+
+    // 3. エラーがあれば止める
+    if (hasError) {
+      setValidationError(true);
+      return;
+    }
+
+    // 4. チェック通過 → 再生成
+    setValidationError(false);
     setIsLoading(true);
     try {
       const editedDeliveryNote: DeliveryNote = {
@@ -55,7 +112,7 @@ export const EditForm: React.FC<EditFormProps> = ({
         tax: Number(data.tax),
         total: Number(data.subtotal) + Number(data.tax),
         payment_received: Number(data.payment_received),
-        items: data.items.filter((item: any) => item.product_name.trim()),
+        items: items.filter((item: any) => item.product_name.trim()),
       };
 
       const editedPreviousBilling: PreviousBilling = {
@@ -82,7 +139,7 @@ export const EditForm: React.FC<EditFormProps> = ({
         ✏️ 請求書内容の編集
       </h2>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="bg-gray-50 border border-gray-200 rounded-xl p-8 space-y-6">
+      <div className="bg-gray-50 border border-gray-200 rounded-xl p-8 space-y-6">
         {/* 基本情報 */}
         <div>
           <h3 className="text-xl font-semibold mb-4">基本情報</h3>
@@ -139,8 +196,19 @@ export const EditForm: React.FC<EditFormProps> = ({
                   type="number"
                   {...register('subtotal')}
                   step="1000"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                  className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:border-primary ${
+                    subtotalExpected.mismatch ? 'border-red-500 border-2' : 'border-gray-300'
+                  }`}
                 />
+                {subtotalExpected.mismatch && (
+                  <button
+                    type="button"
+                    onClick={() => setValue('subtotal', subtotalExpected.expected)}
+                    className="text-sm text-blue-600 hover:text-blue-800 cursor-pointer mt-1"
+                  >
+                    → {subtotalExpected.expected.toLocaleString()} (クリックで反映)
+                  </button>
+                )}
               </div>
 
               <div>
@@ -151,8 +219,19 @@ export const EditForm: React.FC<EditFormProps> = ({
                   type="number"
                   {...register('tax')}
                   step="100"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                  className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:border-primary ${
+                    taxExpected.mismatch ? 'border-red-500 border-2' : 'border-gray-300'
+                  }`}
                 />
+                {taxExpected.mismatch && (
+                  <button
+                    type="button"
+                    onClick={() => setValue('tax', taxExpected.expected)}
+                    className="text-sm text-blue-600 hover:text-blue-800 cursor-pointer mt-1"
+                  >
+                    → {taxExpected.expected.toLocaleString()} (クリックで反映)
+                  </button>
+                )}
               </div>
 
               <div>
@@ -281,8 +360,19 @@ export const EditForm: React.FC<EditFormProps> = ({
                         type="number"
                         {...register(`items.${index}.amount`)}
                         step="100"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-primary"
+                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:border-primary ${
+                          itemExpected[index]?.mismatch ? 'border-red-500 border-2' : 'border-gray-300'
+                        }`}
                       />
+                      {itemExpected[index]?.mismatch && (
+                        <button
+                          type="button"
+                          onClick={() => setValue(`items.${index}.amount`, itemExpected[index].expected)}
+                          className="text-sm text-blue-600 hover:text-blue-800 cursor-pointer mt-1"
+                        >
+                          → {itemExpected[index].expected.toLocaleString()} (クリックで反映)
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -291,9 +381,16 @@ export const EditForm: React.FC<EditFormProps> = ({
           </div>
         </div>
 
-        {/* 送信ボタン */}
+        {/* 計算エラーメッセージ */}
+        {validationError && (
+          <Message type="error">
+            計算が合わない箇所があります（赤枠）。修正してからPDFを再生成してください。
+          </Message>
+        )}
+
+        {/* ボタン */}
         <div className="grid grid-cols-4 gap-4 pt-4">
-          <Button type="submit" variant="primary" loading={isLoading}>
+          <Button type="button" variant="primary" loading={isLoading} onClick={handleClick}>
             🔄 PDFを再生成
           </Button>
           <div className="col-span-3">
@@ -302,7 +399,7 @@ export const EditForm: React.FC<EditFormProps> = ({
             </Button>
           </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 };

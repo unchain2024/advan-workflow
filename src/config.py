@@ -10,8 +10,12 @@ load_dotenv()
 BASE_DIR = Path(__file__).parent.parent
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
+DATA_DIR = BASE_DIR / "data"
 CREDENTIALS_PATH = BASE_DIR / "credentials.json"
 COMPANY_CONFIG_PATH = BASE_DIR / "company_config.json"
+
+# データベース設定
+DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(DATA_DIR / "monthly_items.db")))
 
 # Google Sheets設定
 # 会社情報マスター（会社名、事業部、郵便番号、住所、ビル名）

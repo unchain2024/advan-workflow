@@ -55,10 +55,12 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
      * 納品書の**上部**に記載されている会社名を抽出
      * 「御中」の**直前**または**近くに**記載されている会社名
      * 「株式会社○○」「○○株式会社」などの法人格を含む会社名
-   - **除外すべきもの**:
+   - **除外すべきもの（絶対に抽出してはいけない）**:
      * 発行元・差出人の会社名は**絶対に除外**
      * 納品書の**下部**に記載されている発行元の会社名
      * 住所・電話番号の近くに記載されている会社名（発行元の可能性が高い）
+     * **「アドバンアパレル」を含む会社名は絶対に除外**（これは発行元の会社名です）
+     * **「アドバンアパレル株式会社」「株式会社アドバンアパレル」は絶対に除外**
    - company_name から「御中」「様」「殿」は除去すること
 
 3. **slip_number**: 伝票番号または納品書番号
@@ -67,7 +69,11 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
 5. **tax**: 消費税額（数値のみ、カンマなし）
 6. **total**: 合計金額（税込）（数値のみ、カンマなし）
 7. **payment_received**: 御入金額（入金額が記載されている場合、なければ0）（数値のみ、カンマなし）
-8. **items**: 明細行の配列。各行は以下の項目を含む：
+8. **is_return**: 返品伝票かどうか（boolean）
+   - テキストに「返品」「返却」「RETURN」などのキーワードが含まれる場合は true
+   - 通常の納品書の場合は false
+   - **重要**: 返品の場合、金額は正の数で記載されていても、後で自動的にマイナスに変換されます
+9. **items**: 明細行の配列。各行は以下の項目を含む：
    - **slip_number**: 伝票番号（行ごとにある場合）
    - **product_code**: 商品コード
    - **product_name**: 品名・商品名
@@ -99,6 +105,7 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
 - 日付は必ず YYYY/MM/DD 形式に変換
 - 会社名から「御中」「様」「殿」は除去
 - **company_name は必ず宛先（受取人）の会社名のみ抽出**すること（発行元の会社名は含めない）
+- **「アドバンアパレル」を含む会社名は絶対に抽出しない**（発行元の会社名）
 - テキスト上部に現れる会社名が宛先の可能性が高い
 
 ## 出力形式
@@ -112,6 +119,7 @@ EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストで
   "tax": 10000,
   "total": 110000,
   "payment_received": 50000,
+  "is_return": false,
   "items": [
     {
       "slip_number": "D-12345",
@@ -285,10 +293,29 @@ class LLMExtractor:
             own_company = load_company_config()
             own_company_name = own_company.get("company_name", "")
 
-            # 自社名が含まれている場合は除外
-            if own_company_name and own_company_name in company_name:
-                print(f"警告: 自社名が会社名として検出されました: {company_name}")
-                company_name = ""  # 空にする
+            if own_company_name:
+                # 正規化して比較（法人格を除去）
+                def normalize_for_filtering(name: str) -> str:
+                    """フィルタリング用に会社名を正規化（法人格等を除去）"""
+                    import re
+                    # 法人格を除去
+                    name = re.sub(r'株式会社|有限会社|合同会社|合資会社|合名会社', '', name)
+                    # 敬称を除去
+                    name = re.sub(r'御中|様|殿', '', name)
+                    # 空白を除去
+                    name = name.replace(' ', '').replace('　', '')
+                    return name.strip()
+
+                normalized_own = normalize_for_filtering(own_company_name)
+                normalized_extracted = normalize_for_filtering(company_name)
+
+                # 双方向チェック：どちらかが他方に含まれている場合は除外
+                if (normalized_own and normalized_extracted and
+                    (normalized_own in normalized_extracted or
+                     normalized_extracted in normalized_own)):
+                    print(f"警告: 自社名が会社名として検出されました: {company_name}")
+                    print(f"  正規化後: 自社名='{normalized_own}' vs 抽出='{normalized_extracted}'")
+                    company_name = ""  # 空にする
 
         # データを整形
         merged_data = {
@@ -299,6 +326,7 @@ class LLMExtractor:
             "tax": extracted.get("tax", 0),
             "total": extracted.get("total", 0),
             "payment_received": extracted.get("payment_received", 0),
+            "is_return": extracted.get("is_return", False),
         }
         all_items = extracted.get("items", [])
 
@@ -391,8 +419,16 @@ class LLMExtractor:
 
     def _to_delivery_note(self, data: dict, items_data: list) -> DeliveryNote:
         """辞書データをDeliveryNoteオブジェクトに変換"""
+        # 返品フラグを取得
+        is_return = data.get("is_return", False)
+
         items = []
         for item in items_data:
+            amount = int(item.get("amount", 0) or 0)
+            # 返品の場合、金額を強制的にマイナスに
+            if is_return and amount > 0:
+                amount = -amount
+
             items.append(
                 DeliveryItem(
                     slip_number=str(item.get("slip_number", "")),
@@ -400,13 +436,22 @@ class LLMExtractor:
                     product_name=str(item.get("product_name", "")),
                     quantity=int(item.get("quantity", 0) or 0),
                     unit_price=int(item.get("unit_price", 0) or 0),
-                    amount=int(item.get("amount", 0) or 0),
+                    amount=amount,
                 )
             )
 
         subtotal = int(data.get("subtotal", 0) or 0)
         tax = int(data.get("tax", 0) or 0)
         total = int(data.get("total", 0) or 0)
+
+        # 返品の場合、小計・消費税・合計をマイナスに
+        if is_return:
+            if subtotal > 0:
+                subtotal = -subtotal
+            if tax > 0:
+                tax = -tax
+            if total > 0:
+                total = -total
 
         # 納品書の金額は「税抜き価格」が記載されている前提で計算
         # パターン1: subtotal（税抜き）のみ記載されている場合

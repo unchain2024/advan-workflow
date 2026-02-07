@@ -6,6 +6,7 @@ export const Sidebar: React.FC = () => {
 
   const navItems = [
     { path: '/', label: '📤 売上計上' },
+    { path: '/monthly-invoice', label: '📊 月次請求書' },
     { path: '/purchase', label: '📥 仕入れ' },
     { path: '/payment', label: '💰 入金額入力' },
     { path: '/settings', label: '⚙️ 自社情報設定' },

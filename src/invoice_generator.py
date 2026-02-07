@@ -85,27 +85,42 @@ class InvoiceGenerator:
         previous_billing: PreviousBilling,
         output_path: Optional[Path] = None,
         invoice_number: str = "",
+        is_monthly: bool = False,
     ) -> Path:
-        """請求書PDFを生成"""
+        """請求書PDFを生成
+
+        Args:
+            delivery_note: 納品書データ（月次の場合は複数納品書を含む）
+            company_info: 会社情報
+            previous_billing: 前月の請求情報
+            output_path: 出力パス
+            invoice_number: 請求書番号
+            is_monthly: 月次請求書モードの場合True
+        """
         self._register_font()
 
         # デバッグ: 入力データを出力
         print(f"DEBUG: delivery_note.date = {delivery_note.date}")
         print(f"DEBUG: delivery_note.company_name = {delivery_note.company_name}")
 
-        # 締切日を計算（月末）
+        # 締切日を計算
         date_str = delivery_note.date or datetime.now().strftime("%Y/%m/%d")
         try:
             date_parts = date_str.split("/")
             year = int(date_parts[0])
             month = int(date_parts[1])
-            # 月末日を計算
-            if month == 12:
-                next_month = datetime(year + 1, 1, 1)
+
+            if is_monthly:
+                # 月次請求書モード: 「YYYY年M月分 (月次請求書)」
+                closing_date = f"{year}年{month}月分 (月次請求書)"
             else:
-                next_month = datetime(year, month + 1, 1)
-            last_day = (next_month - timedelta(days=1)).day
-            closing_date = f"{year}年{month}月{last_day}日締切分"
+                # 通常モード: 月末締切
+                if month == 12:
+                    next_month = datetime(year + 1, 1, 1)
+                else:
+                    next_month = datetime(year, month + 1, 1)
+                last_day = (next_month - timedelta(days=1)).day
+                closing_date = f"{year}年{month}月{last_day}日締切分"
         except (ValueError, IndexError):
             closing_date = f"{date_str} 締切分"
 
@@ -148,6 +163,77 @@ class InvoiceGenerator:
         """請求書番号を生成"""
         now = datetime.now()
         return f"{now.strftime('%y%m%d')}-001"
+
+    def generate_monthly(
+        self,
+        delivery_notes: list[DeliveryNote],
+        company_name: str,
+        year_month: str,
+        company_info: Optional[CompanyInfo],
+        previous_billing: PreviousBilling,
+        output_path: Optional[Path] = None,
+        invoice_number: str = "",
+    ) -> Path:
+        """月次請求書PDFを生成（複数の納品書をまとめる）
+
+        Args:
+            delivery_notes: 納品書データのリスト
+            company_name: 会社名
+            year_month: 年月（YYYY年M月形式）
+            company_info: 会社情報
+            previous_billing: 前月の請求情報
+            output_path: 出力パス
+            invoice_number: 請求書番号
+
+        Returns:
+            Path: 生成されたPDFファイルのパス
+        """
+        # 明細を納品日ごとにグループ化してセパレーター付きで結合
+        all_items = []
+
+        for note in delivery_notes:
+            # セパレーター行を追加
+            separator = DeliveryItem(
+                slip_number="",
+                product_code="",
+                product_name=f"=== 納品日: {note.date} (伝票番号: {note.slip_number}) ===",
+                quantity=0,
+                unit_price=0,
+                amount=0,
+            )
+            all_items.append(separator)
+
+            # 納品書の明細を追加
+            all_items.extend(note.items)
+
+        # 全納品書の合計を計算
+        total_subtotal = sum(note.subtotal for note in delivery_notes)
+        total_tax = sum(note.tax for note in delivery_notes)
+        total_amount = total_subtotal + total_tax
+
+        # 代表の納品書データを作成（明細は結合したもの）
+        from .utils import get_month_end_date
+        month_end_date = get_month_end_date(year_month)
+
+        combined_note = DeliveryNote(
+            slip_number=f"月次-{year_month}",
+            date=month_end_date,
+            company_name=company_name,
+            items=all_items,
+            subtotal=total_subtotal,
+            tax=total_tax,
+            total=total_amount,
+        )
+
+        # 通常のgenerate()を呼び出し（is_monthly=True）
+        return self.generate(
+            delivery_note=combined_note,
+            company_info=company_info,
+            previous_billing=previous_billing,
+            output_path=output_path,
+            invoice_number=invoice_number,
+            is_monthly=True,
+        )
 
     def _create_pdf(self, data: InvoiceData, output_path: Path):
         """PDFを作成（複数ページ対応）"""
