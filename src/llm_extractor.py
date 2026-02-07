@@ -1,37 +1,22 @@
 """LLMを使った納品書データ抽出モジュール
 
-PDFから情報抽出する2段階処理：
-1. Google Cloud Vision APIでOCR（文字認識）
-2. Gemini APIで構造化（項目ごとに分解）
+PDFから情報抽出：Gemini APIに直接画像を送信して構造化データを抽出
 """
-import base64
 import json
-import os
-import pickle
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
 from google import genai
-from google.cloud import vision
-from google.oauth2.credentials import Credentials
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.genai import types
 from pdf2image import convert_from_path
 from PIL import Image
 
-from .config import GEMINI_API_KEY, GEMINI_MODEL, load_company_config, CREDENTIALS_PATH
+from .config import GEMINI_API_KEY, GEMINI_MODEL, load_company_config
 from .pdf_extractor import DeliveryItem, DeliveryNote
 
-# Streamlit対応
-try:
-    import streamlit as st
-    HAS_STREAMLIT = True
-except ImportError:
-    HAS_STREAMLIT = False
-
-
 # LLMに送るプロンプト
-EXTRACTION_PROMPT = """以下は納品書からOCRで抽出したテキストです。このテキストから情報をJSON形式で抽出してください。
+EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情報をJSON形式で抽出してください。
 
 ## 抽出する項目
 
@@ -137,7 +122,7 @@ JSONのみを出力してください。説明は不要です。"""
 
 
 class LLMExtractor:
-    """Google Cloud Vision API + Gemini APIで納品書から情報を抽出するクラス"""
+    """Gemini APIで納品書から情報を抽出するクラス"""
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or GEMINI_API_KEY
@@ -152,87 +137,6 @@ class LLMExtractor:
 
         # Gemini Client作成
         self.gemini_client = genai.Client(api_key=self.api_key)
-        self.vision_client = self._get_vision_client()
-
-    def _get_vision_client(self):
-        """Vision APIクライアントを取得（OAuth認証またはサービスアカウント）"""
-        # Streamlit Cloudの場合はsecretsから読み込む
-        if HAS_STREAMLIT:
-            try:
-                if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-                    credentials = ServiceAccountCredentials.from_service_account_info(
-                        dict(st.secrets['gcp_service_account'])
-                    )
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-            except Exception:
-                # Streamlit が動作していない場合はスキップ
-                pass
-
-        # OAuth認証を使用するかチェック
-        use_oauth = os.getenv("USE_OAUTH", "false").lower() == "true"
-
-        if use_oauth:
-            # 環境変数からBase64エンコードされたトークンを読み込む（Vercel対応）
-            token_base64 = os.getenv("GOOGLE_TOKEN_BASE64")
-            print(f"[DEBUG] USE_OAUTH: {use_oauth}")
-            print(f"[DEBUG] GOOGLE_TOKEN_BASE64 exists: {token_base64 is not None}")
-            print(f"[DEBUG] GOOGLE_TOKEN_BASE64 length: {len(token_base64) if token_base64 else 0}")
-
-            if token_base64:
-                try:
-                    print("[DEBUG] Attempting to decode Base64 token...")
-                    token_data = base64.b64decode(token_base64)
-                    print(f"[DEBUG] Decoded token size: {len(token_data)} bytes")
-
-                    print("[DEBUG] Attempting to unpickle credentials...")
-                    credentials = pickle.loads(token_data)
-                    print("[DEBUG] Successfully loaded credentials from environment variable")
-
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-                except Exception as e:
-                    print(f"❌ 環境変数からのトークン読み込みエラー: {type(e).__name__}: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            # ファイルシステムからtoken.pickleを探す（ローカル環境）
-            base_dir = Path(__file__).parent.parent
-            token_path = base_dir / "token.pickle"
-
-            if token_path.exists():
-                with open(token_path, "rb") as token:
-                    credentials = pickle.load(token)
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-
-            raise RuntimeError(
-                "❌ OAuth認証が必要です。\n"
-                "環境変数 GOOGLE_TOKEN_BASE64 を設定するか、\n"
-                "プロジェクトルートで `python oauth_setup.py` を実行してtoken.pickleを生成してください。"
-            )
-        else:
-            # 環境変数からBase64エンコードされたcredentialsを読み込む（Vercel対応）
-            credentials_base64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
-            if credentials_base64:
-                try:
-                    credentials_data = base64.b64decode(credentials_base64)
-                    credentials_info = json.loads(credentials_data)
-                    credentials = ServiceAccountCredentials.from_service_account_info(credentials_info)
-                    return vision.ImageAnnotatorClient(credentials=credentials)
-                except Exception as e:
-                    print(f"環境変数からのcredentials読み込みエラー: {e}")
-
-            # ファイルシステムからcredentials.jsonを使用（ローカル環境）
-            credentials_path = CREDENTIALS_PATH
-            if credentials_path.exists():
-                credentials = ServiceAccountCredentials.from_service_account_file(
-                    str(credentials_path)
-                )
-                return vision.ImageAnnotatorClient(credentials=credentials)
-
-            raise RuntimeError(
-                f"❌ 認証情報が見つかりません。\n"
-                f"環境変数 GOOGLE_CREDENTIALS_BASE64 を設定するか、\n"
-                f"credentials.jsonを {credentials_path} に配置してください。"
-            )
 
     def extract(self, pdf_path: Path) -> DeliveryNote:
         """PDFから納品書データを抽出
@@ -245,24 +149,11 @@ class LLMExtractor:
         """
         # PDFを画像に変換
         images = self._pdf_to_images(pdf_path)
+        print(f"  PDF → {len(images)} ページの画像に変換")
 
-        # 各ページからOCRでテキスト抽出
-        all_text = []
-        for i, image in enumerate(images):
-            text = self._extract_text_with_vision(image)
-            print(f"\n=== ページ {i + 1} OCR結果 ===")
-            print(f"抽出文字数: {len(text)} 文字")
-            print(f"先頭200文字: {text[:200]}")
-            all_text.append(f"--- ページ {i + 1} ---\n{text}")
-
-        # 全ページのテキストを結合
-        combined_text = "\n\n".join(all_text)
-        print(f"\n=== 合計テキスト ===")
-        print(f"合計文字数: {len(combined_text)} 文字")
-
-        # Geminiで構造化抽出
-        print(f"\n=== Gemini APIに送信中 ===")
-        extracted = self._extract_with_gemini(combined_text)
+        # Geminiに直接画像を送信して構造化抽出
+        print(f"\n=== Gemini APIに画像を直接送信中 ===")
+        extracted = self._extract_with_gemini(images)
         print(f"Gemini応答: {extracted}")
 
         if not extracted:
@@ -341,57 +232,27 @@ class LLMExtractor:
         )
         return images
 
-    def _image_to_base64(self, image: Image.Image) -> str:
-        """PIL ImageをBase64エンコード"""
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        return base64.standard_b64encode(buffer.getvalue()).decode("utf-8")
-
-    def _extract_text_with_vision(self, image: Image.Image) -> str:
-        """Google Cloud Vision APIで画像からテキストを抽出"""
+    def _extract_with_gemini(self, images: list[Image.Image]) -> Optional[dict]:
+        """Geminiに画像を直接送信して構造化データを抽出"""
         try:
-            print("  Vision API呼び出し中...")
-            # PIL ImageをバイトデータとしてVision APIに送信
-            buffer = BytesIO()
-            image.save(buffer, format="PNG")
-            content = buffer.getvalue()
-            print(f"  画像サイズ: {len(content)} バイト")
+            # 画像パーツを作成
+            contents = []
+            for image in images:
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                image_part = types.Part.from_bytes(
+                    data=buffer.getvalue(),
+                    mime_type="image/png",
+                )
+                contents.append(image_part)
 
-            vision_image = vision.Image(content=content)
-            response = self.vision_client.document_text_detection(image=vision_image)
-
-            # レスポンスの詳細をデバッグ出力
-            print(f"  Response type: {type(response)}")
-            print(f"  Has error: {bool(response.error.message) if hasattr(response, 'error') else 'No error field'}")
-            print(f"  Has full_text_annotation: {hasattr(response, 'full_text_annotation')}")
-
-            if hasattr(response, 'full_text_annotation') and response.full_text_annotation:
-                print(f"  full_text_annotation.text length: {len(response.full_text_annotation.text) if response.full_text_annotation.text else 0}")
-
-            if response.error.message:
-                raise Exception(f"Vision API エラー: {response.error.message}")
-
-            # 全テキストを取得
-            text = response.full_text_annotation.text if response.full_text_annotation else ""
-            print(f"  Vision API成功: {len(text)} 文字抽出")
-            return text
-
-        except Exception as e:
-            print(f"Vision API エラー: {e}")
-            import traceback
-            traceback.print_exc()
-            return ""
-
-    def _extract_with_gemini(self, text: str) -> Optional[dict]:
-        """Geminiでテキストから構造化データを抽出"""
-        try:
-            # プロンプトにテキストを埋め込む
-            full_prompt = f"{EXTRACTION_PROMPT}\n\n# 納品書テキスト\n\n{text}"
+            # プロンプトを追加
+            contents.append(EXTRACTION_PROMPT)
 
             # Gemini APIに送信
             response = self.gemini_client.models.generate_content(
                 model=self.model,
-                contents=full_prompt
+                contents=contents,
             )
             response_text = response.text
 

@@ -107,6 +107,13 @@ async def process_pdf(file: UploadFile = File(...)):
         extractor = LLMExtractor()
         delivery_note = extractor.extract(tmp_path)
 
+        # 会社名がNoneの場合はエラーを返す
+        if not delivery_note.company_name:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "会社名を抽出できませんでした。PDFの内容を確認してください。"}
+            )
+
         # 2. 納品書PDFをoutputディレクトリに保存
         output_dir = Path(__file__).parent.parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
