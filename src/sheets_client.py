@@ -598,7 +598,7 @@ class GoogleSheetsClient:
         sheet.update_cell(company_row, tax_col, new_tax)
 
     def get_payment_terms(self, supplier_name: str) -> Optional[PaymentTerms]:
-        """締め日マスターから支払条件を取得
+        """締め日マスターから支払条件を取得（全タブを検索）
 
         Args:
             supplier_name: 仕入先名
@@ -611,59 +611,55 @@ class GoogleSheetsClient:
             return None
 
         try:
-            sheet = self.client.open_by_key(PURCHASE_TERMS_SPREADSHEET_ID).worksheet(
-                PURCHASE_TERMS_SHEET_NAME
-            )
+            spreadsheet = self.client.open_by_key(PURCHASE_TERMS_SPREADSHEET_ID)
+            worksheets = spreadsheet.worksheets()
 
-            # 手動でヘッダーとデータを読み取り（重複ヘッダー対策）
-            all_values = sheet.get_all_values()
-
-            if len(all_values) < 2:
-                print("    警告: 締め日マスターにデータがありません")
-                return None
-
-            # ヘッダー行（Row 1）
-            headers = all_values[0]
-
-            # 各列のインデックスを特定
-            supplier_col = None
-            closing_col = None
-            payment_col = None
-            method_col = None
-
-            for i, header in enumerate(headers):
-                if "仕入先名" in str(header):
-                    supplier_col = i
-                elif "締め日" in str(header):
-                    closing_col = i
-                elif "支払日" in str(header):
-                    payment_col = i
-                elif "支払方法" in str(header):
-                    method_col = i
-
-            if supplier_col is None:
-                print("    警告: 締め日マスターに「仕入先名」列が見つかりません")
-                return None
-
-            # 検索する会社名を正規化
             normalized_search = normalize_company_name(supplier_name)
 
-            # データ行を検索（Row 2以降）
-            for row in all_values[1:]:
-                if len(row) <= supplier_col:
+            for sheet in worksheets:
+                print(f"    締め日マスター検索中: タブ「{sheet.title}」")
+                all_values = sheet.get_all_values()
+
+                if len(all_values) < 2:
                     continue
 
-                master_name = str(row[supplier_col])
-                normalized_master = normalize_company_name(master_name)
+                headers = all_values[0]
 
-                # 正規化した名前で部分一致検索
-                if normalized_search in normalized_master or normalized_master in normalized_search:
-                    return PaymentTerms(
-                        supplier_name=master_name,
-                        closing_day=str(row[closing_col]) if closing_col and len(row) > closing_col else "月末",
-                        payment_day=str(row[payment_col]) if payment_col and len(row) > payment_col else "",
-                        payment_method=str(row[method_col]) if method_col and len(row) > method_col else "",
-                    )
+                supplier_col = None
+                closing_col = None
+                payment_col = None
+                method_col = None
+
+                for i, header in enumerate(headers):
+                    if "仕入先名" in str(header):
+                        supplier_col = i
+                    elif "締め日" in str(header):
+                        closing_col = i
+                    elif "支払日" in str(header):
+                        payment_col = i
+                    elif "支払方法" in str(header):
+                        method_col = i
+
+                if supplier_col is None:
+                    continue
+
+                for row in all_values[1:]:
+                    if len(row) <= supplier_col:
+                        continue
+
+                    master_name = str(row[supplier_col])
+                    normalized_master = normalize_company_name(master_name)
+
+                    if normalized_search in normalized_master or normalized_master in normalized_search:
+                        print(f"    → タブ「{sheet.title}」で発見: {master_name}")
+                        return PaymentTerms(
+                            supplier_name=master_name,
+                            closing_day=str(row[closing_col]) if closing_col and len(row) > closing_col else "月末",
+                            payment_day=str(row[payment_col]) if payment_col and len(row) > payment_col else "",
+                            payment_method=str(row[method_col]) if method_col and len(row) > method_col else "",
+                        )
+
+            print(f"    締め日マスター: 「{supplier_name}」が見つかりません")
             return None
 
         except Exception as e:
