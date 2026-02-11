@@ -138,7 +138,6 @@ export const savePurchaseRecord = async (
   return response.data;
 };
 
-// 月次請求書生成API
 export const generateMonthlyInvoice = async (
   companyName: string,
   yearMonth: string
@@ -147,5 +146,11 @@ export const generateMonthlyInvoice = async (
     company_name: companyName,
     year_month: yearMonth,
   });
+  return response.data;
+};
+
+// DB会社名一覧取得API
+export const getDBCompanies = async (): Promise<{ companies: string[] }> => {
+  const response = await apiClient.get<{ companies: string[] }>('/db-companies');
   return response.data;
 };

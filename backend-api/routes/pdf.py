@@ -532,3 +532,18 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
         }
         print(f"ERROR in generate_monthly_invoice: {error_detail}")
         raise HTTPException(status_code=500, detail=error_detail)
+
+
+class DBCompaniesResponse(BaseModel):
+    companies: list[str]
+
+
+@router.get("/db-companies", response_model=DBCompaniesResponse)
+async def get_db_companies():
+    """月次明細DBに保存されている会社名一覧を取得"""
+    from src.database import MonthlyItemsDB
+
+    db = MonthlyItemsDB()
+    companies = db.get_distinct_companies()
+    return DBCompaniesResponse(companies=companies)
+

@@ -313,3 +313,19 @@ class MonthlyItemsDB:
                 }
 
             return None
+
+    def get_distinct_companies(self) -> list[str]:
+        """月次明細DBに保存されているすべての会社名を取得
+
+        Returns:
+            list[str]: ユニークな会社名のリスト（ソート済み）
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT company_name
+                FROM monthly_items
+                ORDER BY company_name
+            """)
+            return [row["company_name"] for row in cursor.fetchall()]
+
