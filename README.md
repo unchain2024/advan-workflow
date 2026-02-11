@@ -1,87 +1,87 @@
-# 納品書→請求書 ワークフロー自動化
+# Delivery note → Invoice workflow automation
 
-納品書PDFを画像として読み取り、Google Vision API + Gemini APIでOCR+構造化を行い、請求書PDFを自動生成するスクリプト。
+A script that reads a delivery note PDF as an image, performs OCR + structuring using Google Vision API + Gemini API, and automatically generates an invoice PDF.
 
 ## Quick Start
 
-### 最小限のセットアップで起動
+### Start with minimal setup
 
 ```bash
-# 0. システムパッケージをインストール（PDF処理用）
+# 0. Install system package (for PDF processing)
 # Ubuntu/Debian:
 sudo apt-get install poppler-utils
 # macOS:
 # brew install poppler
 
-# 1. 依存パッケージインストール
+# 1. Install dependent packages
 pip install -r requirements.txt
 
-# 2. 環境変数設定
+# 2. Environment variable settings
 cp .env.example .env
-# .envファイルを編集してAPIキーとスプレッドシートIDを設定
+# Edit .env file to set API key and spreadsheet ID
 
-# 3. Google認証設定
-# credentials.jsonをプロジェクトルートに配置
-# （詳細は「セットアップ」セクション参照）
+# 3. Google authentication settings
+# Place credentials.json in the project root
+# (see the Setup section for details)
 
-# 4. CLIツールで納品書を処理
+# 4. Process invoices with CLI tools
 python -m src.main input/your_pdf.pdf
-```
+````
 
-### Webアプリケーションを起動（オプション）
+### Launch web application (optional)
 
 ```bash
-# バックエンドAPI起動
+# Start backend API
 cd backend-api
 python main.py
 or
 uvicorn backend-api.main:app --reload --port 8000
-# → http://localhost:8000 でAPIが起動
+# → API starts at http://localhost:8000
 
-# フロントエンド起動（別ターミナル）
+# Start front end (separate terminal)
 cd frontend-react
 npm install
 npm run dev
-# → http://localhost:5173 でフロントエンドが起動
-```
+# → Start the front end at http://localhost:5173
+````
 
-詳細なセットアップ手順は下記の「セットアップ」セクションを参照してください。
+See the Setup section below for detailed setup instructions.
 
-## 処理フロー
+## Processing flow
 
-```
-[納品書PDF] → [画像変換] → [Google Vision API] → [OCR結果]
+````
+[Delivery note PDF] → [Image conversion] → [Google Vision API] → [OCR result]
                                     ↓
-                              [Gemini API] → [構造化データ]
+[Gemini API] → [Structured data]
                                     ↓
-[会社マスター] ←──────────────────── [会社情報取得]
+[Company master] ←──────────────────── [Company information acquisition]
                                     ↓
-[納品書DB] ←───────────────────────  [保存]
+[Delivery note DB] ←──────────────────────── [Save]
                                     ↓
-[請求書PDF] ←──────────────────────  [PDF生成]
+[Invoice PDF] ←────────────────────── [PDF generation]
                                     ↓
-[請求管理Sheet] ←──────────────────  [保存]
-```
+[Billing Management Sheet] ←────────────────── [Save]
+````
 
-## 機能
+## Features
 
-1. **画像ベースのOCR**: PDFを画像として扱い、Google Vision APIで文字認識
-2. **LLMによる構造化**: 抽出した文字列からGemini APIが項目ごとに分解・構造化（入金額も抽出）
-3. **会社情報取得**: Google Sheetsの会社マスターから郵便番号・住所・事業部を取得
-4. **納品書DB保存**: 納品書の内容をGoogle Sheetsに保存（入金額を含む）
-5. **請求書PDF生成**: 日本式フォーマットの請求書PDFを自動生成
-6. **請求管理記録**: 売上集計表に記録
-7. **請求履歴管理**: 月次の請求履歴を管理（オプション）
+1. **Image-based OCR**: Treat PDF as an image and perform character recognition with Google Vision API
+2. **Structuring by LLM**: Gemini API decomposes and structures each item from the extracted string (also extracts the deposit amount)
+3. **Obtain company information**: Obtain postal code, address, and business division from Google Sheets company master
+4. **Save delivery note DB**: Save the contents of the delivery note to Google Sheets (including the deposit amount)
+5. **Invoice PDF generation**: Automatically generate invoice PDF in Japanese format
+6. **Billing management record**: Recorded in sales summary sheet
+7. **Billing history management**: Manage monthly billing history (optional)
 
-## セットアップ
+## Setup
 
-### 1. 依存パッケージのインストール
+### 1. Installing dependent packages
 
 ```bash
 pip install -r requirements.txt
-```
+````
 
-### 2. システム依存パッケージ（pdf2image用）
+### 2. System dependent package (for pdf2image)
 
 ```bash
 # Ubuntu/Debian
@@ -92,167 +92,164 @@ brew install poppler
 
 # Arch Linux
 sudo pacman -S poppler
-```
+````
 
-### 3. 日本語フォント
+### 3. Japanese font
+The project includes the IPAex Gothic font (`fonts/ipaexg.ttf`), so no additional installation is required.
 
-プロジェクトには IPAex ゴシックフォント (`fonts/ipaexg.ttf`) が含まれているため、追加のインストールは不要です。
+If you want to use a custom font, set `PDF_FONT_PATH` in `.env`.
 
-カスタムフォントを使用したい場合は、`.env` で `PDF_FONT_PATH` を設定してください。
+### 4. Get Google Gemini API key
 
-### 4. Google Gemini API キーの取得
+1. Generate an API key with [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Set in `.env` file
 
-1. [Google AI Studio](https://aistudio.google.com/app/apikey) でAPIキーを生成
-2. `.env` ファイルに設定
+### 5. Google Cloud settings
 
-### 5. Google Cloud設定
+**Important**: If your organization policy blocks service account key creation, use **OAuth 2.0 authentication**. See `OAUTH_SETUP.md` for details.
 
-**重要**: 組織ポリシーでサービスアカウントキーの作成がブロックされている場合は、**OAuth 2.0 認証**を使用してください。詳細は `OAUTH_SETUP.md` を参照。
+#### Option A: OAuth 2.0 authentication (recommended)
 
-#### オプション A: OAuth 2.0 認証（推奨）
+1. Create a project with [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable Google Sheets API
+3. Create an OAuth client ID (desktop app)
+4. Place the downloaded JSON as `credentials.json` in the project root
+5. Set `USE_OAUTH=true` in `.env`
+6. Give your Google account editing permissions to the spreadsheet you use.
 
-1. [Google Cloud Console](https://console.cloud.google.com/)でプロジェクトを作成
-2. Google Sheets API を有効化
-3. OAuth クライアント ID を作成（デスクトップアプリ）
-4. ダウンロードしたJSONを `credentials.json` としてプロジェクトルートに配置
-5. `.env` で `USE_OAUTH=true` に設定
-6. 使用するスプレッドシートに自分のGoogleアカウントの編集権限を付与
+Details: see `OAUTH_SETUP.md`
 
-詳細: `OAUTH_SETUP.md` を参照
+#### Option B: Service account authentication
 
-#### オプション B: サービスアカウント認証
+1. Create a project with [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable Google Sheets API
+3. Create a service account and download the JSON key
+4. Place the downloaded JSON as `credentials.json` in the project root
+5. Set `USE_OAUTH=false` in `.env` (or omit the option)
+6. Add the service account email address to the spreadsheet you use in the sharing settings
 
-1. [Google Cloud Console](https://console.cloud.google.com/)でプロジェクトを作成
-2. Google Sheets API を有効化
-3. サービスアカウントを作成し、JSONキーをダウンロード
-4. ダウンロードしたJSONを `credentials.json` としてプロジェクトルートに配置
-5. `.env` で `USE_OAUTH=false` に設定（またはオプションを省略）
-6. 使用するスプレッドシートにサービスアカウントのメールアドレスを共有設定で追加
-
-### 6. 環境変数の設定
-
+### 6. Setting environment variables
 ```bash
 cp .env.example .env
-```
+````
 
-`.env` を編集:
+Edit `.env`:
 
 ```env
-# Gemini API（必須）
+# Gemini API (required)
 GEMINI_API_KEY=your_gemini_api_key
 
-# Google Sheets ID（URLの /d/XXXXX/edit の XXXXX 部分）
+# Google Sheets ID (XXXX part of /d/XXXXX/edit in the URL)
 COMPANY_MASTER_SPREADSHEET_ID=your_spreadsheet_id
 DELIVERY_DB_SPREADSHEET_ID=your_spreadsheet_id
 BILLING_SPREADSHEET_ID=your_spreadsheet_id
 
-# 自社情報
+# Company information
 OWN_REGISTRATION_NUMBER=T1234567890123
-OWN_COMPANY_NAME=株式会社サンプル
+OWN_COMPANY_NAME=Sample Co., Ltd.
 ...
-```
+````
 
-### 7. スプレッドシートの準備
+### 7. Preparing the spreadsheet
 
-#### 会社マスター（COMPANY_MASTER）
+#### Company Master (COMPANY_MASTER)
 URL: https://docs.google.com/spreadsheets/d/1l3GPdd2BoyPC_PIe5yktocAHJ30C1f2YpfCSOw6Tj9U/edit
 
-| 会社名 | 事業部 | 郵便番号 | 住所 | ビル名 |
-|--------|--------|----------|------|--------|
-| 株式会社ABC | 営業部 | 100-0001 | 東京都... | ABCビル3F |
+| Company name | Division | Postal code | Address | Building name |
+|---------|---------|---------|------|---------|
+| ABC Co., Ltd. | Sales Department | 100-0001 | Tokyo... | ABC Building 3F |
 
-#### 納品書DB（DELIVERY_DB）
+#### Delivery note DB (DELIVERY_DB)
 
-| 日付 | 会社名 | 伝票番号 | 商品コード | 品名 | 数量 | 単価 | 金額 | 小計 | 消費税 | 合計 | 入金額 |
-|------|--------|----------|------------|------|------|------|------|------|--------|------|--------|
+| Date | Company name | Slip number | Product code | Product name | Quantity | Unit price | Amount | Subtotal | Consumption tax | Total | Deposit amount |
+|------|---------|------------|------------|------|------|------|------|------|---------|------|---------|
 
-#### 売上集計表（BILLING）
+#### Sales summary table (BILLING)
 URL: https://docs.google.com/spreadsheets/d/1eBmP3GWRNE2QZ6I8e1n2tjR7J_pHsB9L/edit
 
-| 相手方 | 先月残高 | 先月発生 | 先月消費税 | 先月消滅 | 残高 | 発生 | 消費税 | 消滅 | 残高 | 後半合計 |
-|--------|----------|----------|------------|----------|------|------|--------|------|------|----------|
+| Counterparty | Last month's balance | Accrued last month | Consumption tax last month | Disappeared last month | Balance | Accrued | Consumption tax | Disappeared | Balance | Second half total |
+|---------|---------|---------|------------|------------|---------|------|------|---------|------|------|---------|
 
-#### 請求履歴管理（BILLING_HISTORY）- オプション
+#### Billing History Management (BILLING_HISTORY) -Options
 
-| 年月 | 会社名 | 前回御請求額 | 御入金額 | 繰越残高 | 売上額 | 消費税額 | 今回御請求額 | 更新日時 |
-|------|--------|-------------|----------|----------|--------|----------|-------------|----------|
+| Year and month | Company name | Last billed amount | Paid amount | Balance carried forward | Sales amount | Consumption tax amount | Current billed amount | Update date and time |
+|------|---------|-------------|----------|----------|---------|----------|-------------|----------|
 
-## 使用方法
+## How to use
 
 ```bash
-# inputディレクトリ内のPDFを全て処理
+# Process all PDFs in the input directory
 python -m src.main
 
-# 特定のPDFを処理
+# Process specific PDF
 python -m src.main input/delivery_note.pdf
 
-# 複数のPDFを処理
+# Process multiple PDFs
 python -m src.main input/note1.pdf input/note2.pdf
 
-# DRY RUN（Google Sheetsへの書き込みをスキップ、PDF生成のみ）
+# DRY RUN (skip writing to Google Sheets, only generate PDF)
 python -m src.main --dry-run
-```
+````
 
-## ディレクトリ構造
+## Directory structure
 
-```
+````
 advan-workflow/
-├── credentials.json      # Google API認証ファイル（要作成）
-├── .env                  # 環境変数（要作成）
-├── .env.example          # 環境変数サンプル
-├── requirements.txt      # 依存パッケージ
-├── input/                # 納品書PDF配置ディレクトリ
-├── output/               # 生成された請求書PDF出力先
+├── credentials.json # Google API authentication file (need to be created)
+├── .env # Environment variable (need to be created)
+├── .env.example # Environment variable sample
+├── requirements.txt # Dependency package
+├── input/# Delivery note PDF location directory
+├── output/# Output destination of generated invoice PDF
 ├── src/
-│   ├── __init__.py
-│   ├── config.py         # 設定
-│   ├── pdf_extractor.py  # データ構造定義
-│   ├── llm_extractor.py  # LLM抽出モジュール（Google Vision + Gemini API）
-│   ├── sheets_client.py  # Google Sheets連携
-│   ├── invoice_generator.py  # 請求書PDF生成
-│   └── main.py           # メインスクリプト
+│ ├── __init__.py
+│ ├── config.py # configuration
+│ ├── pdf_extractor.py # Data structure definition
+│ ├── llm_extractor.py # LLM extraction module (Google Vision + Gemini API)
+│ ├── sheets_client.py # Google Sheets cooperation
+│ ├── invoice_generator.py # Generate invoice PDF
+│ └── main.py # Main script
 └── README.md
-```
+````
 
-## LLM抽出の仕組み
+## How LLM extraction works
 
-### 1. PDF → 画像変換
+### 1. PDF → Image conversion
 
 ```python
 from pdf2image import convert_from_path
 images = convert_from_path(pdf_path, dpi=150)
-```
-
-### 2. Google Vision APIでOCR
+````
+### 2. OCR with Google Vision API
 
 ```python
 vision_image = vision.Image(content=content)
 response = vision_client.document_text_detection(image=vision_image)
 text = response.full_text_annotation.text
-```
+````
 
-### 3. Gemini APIで構造化
+### 3. Structured with Gemini API
 
 ```python
 response = gemini_client.models.generate_content(
     model="gemini-2.5-flash",
     contents=f"{EXTRACTION_PROMPT}\n\n{text}"
 )
-```
+````
 
-### 4. プロンプトで構造化を指示
+### 4. Prompt for structuring
 
-Gemini APIに以下の項目をJSON形式で抽出させる:
-- date: 日付
-- company_name: 会社名
-- slip_number: 伝票番号
-- subtotal: 小計
-- tax: 消費税
-- total: 合計
-- payment_received: 御入金額（追加）
-- items: 明細行（商品コード、品名、数量、単価、金額）
+Have Gemini API extract the following items in JSON format:
+-date: date
+-company_name: Company name
+-slip_number: slip number
+-subtotal: subtotal
+-tax: consumption tax
+-total: total
+-payment_received: Payment amount (additional)
+-items: detail line (product code, product name, quantity, unit price, amount)
 
-### 5. JSONをパースしてデータ構造に変換
+### 5. Parse JSON and convert it to data structure
 
 ```python
 extracted = json.loads(response_text)
@@ -261,17 +258,17 @@ delivery_note = DeliveryNote(
     company_name=extracted["company_name"],
     ...
 )
-```
+````
 
-## 注意事項
+## Notes
 
-- Google Vision APIとGemini APIの利用には料金が発生します
-- 画像解像度は150dpiに設定（APIコスト最適化のため）
-- 複数ページPDFは各ページを個別に処理し、明細を結合
-- 日本語フォント（IPAexゴシック）はプロジェクトに含まれています
+-Fees apply for using Google Vision API and Gemini API
+-Image resolution set to 150dpi (for API cost optimization)
+-Multi-page PDFs process each page individually and combine details
+-Japanese font (IPAex Gothic) is included in the project
 
-## コスト見積もり
+## Cost estimate
 
-- Google Vision API: ドキュメントテキスト検出 $1.50/1,000ユニット（最初の1,000ユニット/月は無料）
-- Gemini 2.5 Flash: 無料枠あり（制限内であれば無料）
-- 1枚の納品書PDF: 概算 約$0.002〜0.01（Vision API主体）
+-Google Vision API: Document Text Detection $1.50/1,000 units (first 1,000 units/month free)
+-Gemini 2.5 Flash: Free tier available (free within limits)
+-1 PDF delivery note: Approximately $0.002~0.01 (based on Vision API)
