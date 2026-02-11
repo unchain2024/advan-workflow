@@ -60,6 +60,11 @@ export const UploadPage: React.FC = () => {
   const handleProcess = async () => {
     if (files.length === 0) return;
 
+    if (!salesPerson.trim()) {
+      setError('担当者名を入力してください');
+      return;
+    }
+
     setIsProcessing(true);
     setError(null);
     clearAll();
@@ -152,7 +157,7 @@ export const UploadPage: React.FC = () => {
           {/* 担当者名 */}
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              担当者名
+              担当者名 <span className="text-red-500">*</span>
             </label>
             <input
               type="text"

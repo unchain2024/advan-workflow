@@ -329,3 +329,19 @@ class MonthlyItemsDB:
             """)
             return [row["company_name"] for row in cursor.fetchall()]
 
+    def get_distinct_sales_persons(self) -> list[str]:
+        """月次明細DBに保存されているすべての担当者名を取得
+
+        Returns:
+            list[str]: ユニークな担当者名のリスト（ソート済み、空文字を除く）
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT sales_person
+                FROM monthly_items
+                WHERE sales_person != ''
+                ORDER BY sales_person
+            """)
+            return [row["sales_person"] for row in cursor.fetchall()]
+

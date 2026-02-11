@@ -547,3 +547,17 @@ async def get_db_companies():
     companies = db.get_distinct_companies()
     return DBCompaniesResponse(companies=companies)
 
+
+class DBSalesPersonsResponse(BaseModel):
+    sales_persons: list[str]
+
+
+@router.get("/db-sales-persons", response_model=DBSalesPersonsResponse)
+async def get_db_sales_persons():
+    """月次明細DBに保存されている担当者名一覧を取得"""
+    from src.database import MonthlyItemsDB
+
+    db = MonthlyItemsDB()
+    sales_persons = db.get_distinct_sales_persons()
+    return DBSalesPersonsResponse(sales_persons=sales_persons)
+

@@ -154,3 +154,9 @@ export const getDBCompanies = async (): Promise<{ companies: string[] }> => {
   const response = await apiClient.get<{ companies: string[] }>('/db-companies');
   return response.data;
 };
+
+// DB担当者名一覧取得API
+export const getDBSalesPersons = async (): Promise<{ sales_persons: string[] }> => {
+  const response = await apiClient.get<{ sales_persons: string[] }>('/db-sales-persons');
+  return response.data;
+};

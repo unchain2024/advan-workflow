@@ -3,22 +3,27 @@ import { Button } from '../components/Common/Button';
 import { Message } from '../components/Common/Message';
 import { Spinner } from '../components/Common/Spinner';
 import { MetricCard } from '../components/Common/MetricCard';
-import { generateMonthlyInvoice, getDBCompanies } from '../api/client';
+import { generateMonthlyInvoice, getDBCompanies, getDBSalesPersons } from '../api/client';
 import type { GenerateMonthlyInvoiceResponse } from '../types';
 
 export const MonthlyInvoicePage: React.FC = () => {
   const [companyName, setCompanyName] = useState('');
+  const [salesPerson, setSalesPerson] = useState('');
   const [selectedYear, setSelectedYear] = useState('2025');
   const [selectedMonth, setSelectedMonth] = useState('3');
   const [companies, setCompanies] = useState<string[]>([]);
+  const [salesPersons, setSalesPersons] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<GenerateMonthlyInvoiceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // ページ読み込み時にDB内の会社名リストを取得
+  // ページ読み込み時にDB内の会社名・担当者名リストを取得
   useEffect(() => {
     getDBCompanies()
       .then((res) => setCompanies(res.companies))
+      .catch(() => {});
+    getDBSalesPersons()
+      .then((res) => setSalesPersons(res.sales_persons))
       .catch(() => {});
   }, []);
 
@@ -100,6 +105,26 @@ export const MonthlyInvoicePage: React.FC = () => {
           >
             <option value="">会社を選択してください</option>
             {companies.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* 担当者名ドロップダウン */}
+        <div className="mb-4">
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            担当者名
+          </label>
+          <select
+            value={salesPerson}
+            onChange={(e) => setSalesPerson(e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-white text-gray-700"
+            disabled={isLoading}
+          >
+            <option value="">担当者を選択してください</option>
+            {salesPersons.map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>
