@@ -27,10 +27,16 @@ const apiClient = axios.create({
 
 export const processPDF = async (
   file: File,
+  salesPerson: string,
+  year: number,
+  month: number,
   onProgress?: (progress: number, message: string) => void
 ): Promise<ProcessPDFResponse> => {
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('sales_person', salesPerson);
+  formData.append('year', year.toString());
+  formData.append('month', month.toString());
 
   // シンプルなPOSTリクエスト（プログレスバーは模擬）
   if (onProgress) {

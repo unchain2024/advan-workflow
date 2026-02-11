@@ -19,6 +19,9 @@ export const UploadPage: React.FC = () => {
   const [showEditForm, setShowEditForm] = useState(false);
 
   const {
+    salesPerson,
+    selectedYear,
+    selectedMonth,
     currentDeliveryNote,
     currentCompanyInfo,
     currentPreviousBilling,
@@ -26,6 +29,9 @@ export const UploadPage: React.FC = () => {
     currentYearMonth,
     currentDeliveryPdf,
     spreadsheetSaved,
+    setSalesPerson,
+    setSelectedYear,
+    setSelectedMonth,
     setProcessResult,
     setCurrentDeliveryNote,
     setCurrentPreviousBilling,
@@ -63,7 +69,7 @@ export const UploadPage: React.FC = () => {
         const file = files[i];
         setProgressMessage(`処理中: ${file.name} (${i + 1}/${files.length})`);
 
-        const result = await processPDF(file, (prog, msg) => {
+        const result = await processPDF(file, salesPerson, selectedYear, selectedMonth, (prog, msg) => {
           setProgress(prog);
           setProgressMessage(msg);
         });
@@ -138,6 +144,60 @@ export const UploadPage: React.FC = () => {
           <li>請求書PDFを生成</li>
           <li>売上集計表を更新（発生・消費税を加算）</li>
         </ol>
+      </div>
+
+      {/* 担当者・対象月入力 */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
+        <div className="flex items-end gap-4">
+          {/* 担当者名 */}
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              担当者名
+            </label>
+            <input
+              type="text"
+              value={salesPerson}
+              onChange={(e) => setSalesPerson(e.target.value)}
+              placeholder="例：山田太郎"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent"
+              disabled={isProcessing}
+            />
+          </div>
+
+          {/* 対象年 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              対象年
+            </label>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent"
+              disabled={isProcessing}
+            >
+              {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) => (
+                <option key={y} value={y}>{y}年</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 対象月 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              対象月
+            </label>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent"
+              disabled={isProcessing}
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>{m}月</option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* File Upload */}
