@@ -30,6 +30,8 @@ export const processPDF = async (
   salesPerson: string,
   year: number,
   month: number,
+  resetExisting: boolean = false,
+  companyNameOverride: string = '',
   onProgress?: (progress: number, message: string) => void
 ): Promise<ProcessPDFResponse> => {
   const formData = new FormData();
@@ -37,6 +39,10 @@ export const processPDF = async (
   formData.append('sales_person', salesPerson);
   formData.append('year', year.toString());
   formData.append('month', month.toString());
+  formData.append('reset_existing', resetExisting.toString());
+  if (companyNameOverride) {
+    formData.append('company_name_override', companyNameOverride);
+  }
 
   // シンプルなPOSTリクエスト（プログレスバーは模擬）
   if (onProgress) {

@@ -202,6 +202,26 @@ class MonthlyItemsDB:
 
                 print(f"    月次明細DB新規作成: {company_name} ({year_month})")
 
+    def delete_monthly_items(
+        self,
+        company_name: str,
+        year_month: str,
+    ):
+        """指定した会社・年月の月次明細レコードを削除
+
+        Args:
+            company_name: 会社名
+            year_month: 年月（YYYY年M月形式）
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM monthly_items
+                WHERE year_month = ? AND company_name = ?
+            """, (year_month, company_name))
+            if cursor.rowcount > 0:
+                print(f"    月次明細DB削除: {company_name} ({year_month})")
+
     def get_monthly_items(
         self,
         company_name: str,

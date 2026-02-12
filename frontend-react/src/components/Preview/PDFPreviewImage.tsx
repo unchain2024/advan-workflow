@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 
 interface PDFPreviewImageProps {
-  deliveryPdfUrl: string | null;
+  deliveryPdfUrls: string[];
   invoicePdfUrl: string;
 }
 
 export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
-  deliveryPdfUrl,
+  deliveryPdfUrls,
   invoicePdfUrl,
 }) => {
   const [invoiceImages, setInvoiceImages] = useState<string[]>([]);
-  const [deliveryImage, setDeliveryImage] = useState<string | null>(null);
+  const [deliveryImages, setDeliveryImages] = useState<(string | null)[]>([]);
+  const [currentDeliveryIndex, setCurrentDeliveryIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +22,6 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
 
       try {
         // 請求書PDFを画像に変換
-        // URLからクエリパラメータを除去してファイル名を取得
         const invoiceUrl = invoicePdfUrl.split('?')[0];
         const invoiceFilename = invoiceUrl.split('/').pop();
         if (invoiceFilename) {
@@ -33,23 +33,27 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
           setInvoiceImages(data.images);
         }
 
-        // 納品書PDFも画像に変換
-        if (deliveryPdfUrl) {
-          // URLからクエリパラメータを除去してファイル名を取得
-          const deliveryUrl = deliveryPdfUrl.split('?')[0];
+        // 全ての納品書PDFを画像に変換
+        const loadedDeliveryImages: (string | null)[] = [];
+        for (const pdfUrl of deliveryPdfUrls) {
+          const deliveryUrl = pdfUrl.split('?')[0];
           const deliveryFilename = deliveryUrl.split('/').pop();
           if (deliveryFilename) {
-            const response = await fetch(`/api/pdf-to-images/${encodeURIComponent(deliveryFilename)}`);
-            if (!response.ok) {
-              throw new Error('納品書の画像変換に失敗しました');
-            }
-            const data = await response.json();
-            // 納品書は最初のページのみ使用
-            if (data.images.length > 0) {
-              setDeliveryImage(data.images[0]);
+            try {
+              const response = await fetch(`/api/pdf-to-images/${encodeURIComponent(deliveryFilename)}`);
+              if (response.ok) {
+                const data = await response.json();
+                loadedDeliveryImages.push(data.images.length > 0 ? data.images[0] : null);
+              } else {
+                loadedDeliveryImages.push(null);
+              }
+            } catch {
+              loadedDeliveryImages.push(null);
             }
           }
         }
+        setDeliveryImages(loadedDeliveryImages);
+        setCurrentDeliveryIndex(0);
       } catch (err) {
         setError(err instanceof Error ? err.message : '画像の読み込みに失敗しました');
       } finally {
@@ -58,7 +62,7 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
     };
 
     loadImages();
-  }, [invoicePdfUrl, deliveryPdfUrl]);
+  }, [invoicePdfUrl, deliveryPdfUrls]);
 
   if (loading) {
     return (
@@ -77,7 +81,8 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
     );
   }
 
-  const maxPages = Math.max(invoiceImages.length, deliveryImage ? 1 : 0);
+  const totalDeliveries = deliveryImages.length;
+  const currentDeliveryImage = totalDeliveries > 0 ? deliveryImages[currentDeliveryIndex] : null;
 
   return (
     <div>
@@ -87,54 +92,70 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
         📄 PDF比較プレビュー
       </h2>
 
-      <div className="space-y-6">
-        {Array.from({ length: maxPages }, (_, i) => (
-          <div key={i} className="grid grid-cols-2 gap-6">
-            {/* 納品書（左） */}
-            <div>
-              {deliveryImage && i === 0 ? (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
-                    📥 納品書（入力）
-                  </div>
-                  <div className="bg-white p-4">
-                    <img
-                      src={deliveryImage}
-                      alt="納品書"
-                      className="w-full h-auto"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="border border-dashed border-gray-300 rounded-lg p-12 text-center bg-gray-50">
-                  <p className="text-gray-400">ℹ️ 納品書: このページはありません</p>
+      <div className="grid grid-cols-2 gap-6">
+        {/* 納品書（左） */}
+        <div>
+          {currentDeliveryImage ? (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
+                📥 納品書（入力）
+              </div>
+              <div className="bg-white p-4">
+                <img
+                  src={currentDeliveryImage}
+                  alt={`納品書 ${currentDeliveryIndex + 1}`}
+                  className="w-full h-auto"
+                />
+              </div>
+              {/* ページ切り替え */}
+              {totalDeliveries > 1 && (
+                <div className="flex items-center justify-center gap-4 py-3 bg-gray-50 border-t border-gray-200">
+                  <button
+                    onClick={() => setCurrentDeliveryIndex((prev) => Math.max(0, prev - 1))}
+                    disabled={currentDeliveryIndex === 0}
+                    className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold"
+                  >
+                    ◀
+                  </button>
+                  <span className="text-sm font-medium text-gray-600">
+                    {currentDeliveryIndex + 1} / {totalDeliveries}
+                  </span>
+                  <button
+                    onClick={() => setCurrentDeliveryIndex((prev) => Math.min(totalDeliveries - 1, prev + 1))}
+                    disabled={currentDeliveryIndex === totalDeliveries - 1}
+                    className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold"
+                  >
+                    ▶
+                  </button>
                 </div>
               )}
             </div>
+          ) : (
+            <div className="border border-dashed border-gray-300 rounded-lg p-12 text-center bg-gray-50">
+              <p className="text-gray-400">ℹ️ 納品書: プレビューなし</p>
+            </div>
+          )}
+        </div>
 
-            {/* 請求書（右） */}
-            <div>
-              {i < invoiceImages.length ? (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
-                    📤 請求書（生成） - ページ {i + 1}
-                  </div>
-                  <div className="bg-white p-4">
-                    <img
-                      src={invoiceImages[i]}
-                      alt={`請求書 ページ ${i + 1}`}
-                      className="w-full h-auto"
-                    />
-                  </div>
+        {/* 請求書（右） */}
+        <div>
+          <div className="space-y-4">
+            {invoiceImages.map((img, i) => (
+              <div key={i} className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
+                  📤 請求書（生成） - ページ {i + 1}
                 </div>
-              ) : (
-                <div className="border border-dashed border-gray-300 rounded-lg p-12 text-center bg-gray-50">
-                  <p className="text-gray-400">ℹ️ 請求書: このページはありません</p>
+                <div className="bg-white p-4">
+                  <img
+                    src={img}
+                    alt={`請求書 ページ ${i + 1}`}
+                    className="w-full h-auto"
+                  />
                 </div>
-              )}
-            </div>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>
     </div>
   );

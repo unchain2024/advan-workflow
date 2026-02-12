@@ -95,6 +95,8 @@ async def process_pdf(
     sales_person: str = Form(""),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    reset_existing: bool = Form(False),
+    company_name_override: str = Form(""),
 ):
     """納品書PDFを処理して請求書を生成"""
 
@@ -120,13 +122,17 @@ async def process_pdf(
                 detail={"error": "会社名を抽出できませんでした。PDFの内容を確認してください。"}
             )
 
+        # バッチ内で統一された会社名を使用（LLM抽出のばらつきを防ぐ）
+        effective_company_name = company_name_override.strip() if company_name_override.strip() else delivery_note.company_name
+
         # 2. 納品書PDFをoutputディレクトリに保存
         output_dir = Path(__file__).parent.parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
 
         safe_company_name = delivery_note.company_name.replace("/", "_").replace("\\", "_")
         date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
-        delivery_filename = f"delivery_{safe_company_name}_{date_str}.pdf"
+        slip_id = delivery_note.slip_number.replace("/", "_").replace("\\", "_") if delivery_note.slip_number else str(int(time.time()))
+        delivery_filename = f"delivery_{safe_company_name}_{date_str}_{slip_id}.pdf"
         delivery_path = output_dir / delivery_filename
 
         # 納品書PDFをコピー
@@ -134,7 +140,7 @@ async def process_pdf(
 
         # 3. 会社情報取得
         sheets_client = GoogleSheetsClient()
-        company_info = sheets_client.get_company_info(delivery_note.company_name)
+        company_info = sheets_client.get_company_info(effective_company_name)
 
         # 4. 前月の請求情報を取得（ユーザー指定の年月を優先）
         if year and month:
@@ -142,26 +148,10 @@ async def process_pdf(
         else:
             year_month = extract_year_month(delivery_note.date)
         previous_billing = sheets_client.get_previous_billing(
-            delivery_note.company_name, year_month
+            effective_company_name, year_month
         )
 
-        # 5. 請求書PDF生成
-        invoice_generator = InvoiceGenerator()
-
-        # 請求書PDFをoutputディレクトリに生成
-        safe_company_name = delivery_note.company_name.replace("/", "_").replace("\\", "_")
-        date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
-        invoice_filename = f"invoice_{safe_company_name}_{date_str}.pdf"
-        invoice_path = output_dir / invoice_filename
-
-        invoice_generator.generate(
-            delivery_note=delivery_note,
-            company_info=company_info,
-            previous_billing=previous_billing,
-            output_path=invoice_path,
-        )
-
-        # 6. 月次明細DBに保存
+        # 5. 月次明細DBに保存（請求書生成前に保存して累積データを取得する）
         from src.database import MonthlyItemsDB
         from src.utils import parse_year_month
 
@@ -169,13 +159,61 @@ async def process_pdf(
             year_month_str = f"{year}年{month}月"
         else:
             year_month_str = parse_year_month(delivery_note.date)
+
+        db = MonthlyItemsDB()
         if year_month_str:
-            db = MonthlyItemsDB()
+            # バッチの最初のファイルの場合、既存レコードを削除して再作成
+            if reset_existing:
+                db.delete_monthly_items(
+                    company_name=effective_company_name,
+                    year_month=year_month_str,
+                )
             db.save_monthly_items(
-                company_name=delivery_note.company_name,
+                company_name=effective_company_name,
                 year_month=year_month_str,
                 delivery_note=delivery_note,
                 sales_person=sales_person,
+            )
+
+        # 6. 累積データから請求書PDF生成（複数納品書を合算）
+        invoice_generator = InvoiceGenerator()
+
+        safe_company_name = effective_company_name.replace("/", "_").replace("\\", "_")
+
+        if year_month_str:
+            # DB内の全納品書データを取得して累積請求書を生成
+            all_notes = db.get_monthly_items(
+                company_name=effective_company_name,
+                year_month=year_month_str,
+            )
+
+            year_month_safe = year_month_str.replace("年", "_").replace("月", "")
+            invoice_filename = f"invoice_{safe_company_name}_{year_month_safe}.pdf"
+            invoice_path = output_dir / invoice_filename
+
+            # 古いPDFを削除（再生成のため）
+            if invoice_path.exists():
+                invoice_path.unlink()
+
+            invoice_generator.generate_monthly(
+                delivery_notes=all_notes if all_notes else [delivery_note],
+                company_name=effective_company_name,
+                year_month=year_month_str,
+                company_info=company_info,
+                previous_billing=previous_billing,
+                output_path=invoice_path,
+            )
+        else:
+            # year_month_strが取得できない場合は単一ファイルで生成
+            date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
+            invoice_filename = f"invoice_{safe_company_name}_{date_str}.pdf"
+            invoice_path = output_dir / invoice_filename
+
+            invoice_generator.generate(
+                delivery_note=delivery_note,
+                company_info=company_info,
+                previous_billing=previous_billing,
+                output_path=invoice_path,
             )
 
         # レスポンス作成（キャッシュバスティング用にタイムスタンプ追加）

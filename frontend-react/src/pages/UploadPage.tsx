@@ -27,7 +27,6 @@ export const UploadPage: React.FC = () => {
     currentPreviousBilling,
     currentInvoicePath,
     currentYearMonth,
-    currentDeliveryPdf,
     spreadsheetSaved,
     setSalesPerson,
     setSelectedYear,
@@ -37,6 +36,8 @@ export const UploadPage: React.FC = () => {
     setCurrentPreviousBilling,
     setCurrentInvoicePath,
     setSpreadsheetSaved,
+    addDeliveryPdfUrl,
+    deliveryPdfUrls,
     clearAll,
   } = useAppStore();
 
@@ -70,14 +71,21 @@ export const UploadPage: React.FC = () => {
     clearAll();
 
     try {
+      let batchCompanyName = '';
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setProgressMessage(`処理中: ${file.name} (${i + 1}/${files.length})`);
 
-        const result = await processPDF(file, salesPerson, selectedYear, selectedMonth, (prog, msg) => {
+        const result = await processPDF(file, salesPerson, selectedYear, selectedMonth, i === 0, batchCompanyName, (prog, msg) => {
           setProgress(prog);
           setProgressMessage(msg);
         });
+
+        // 最初のファイルの会社名をバッチ内で共有
+        if (i === 0 && result.delivery_note.company_name) {
+          batchCompanyName = result.delivery_note.company_name;
+        }
 
         setProcessResult({
           deliveryNote: result.delivery_note,
@@ -89,6 +97,7 @@ export const UploadPage: React.FC = () => {
 
         // 納品書PDFのURLを保存（バックエンドから返されたURL）
         useAppStore.setState({ currentDeliveryPdf: result.delivery_pdf_url });
+        addDeliveryPdfUrl(result.delivery_pdf_url);
       }
 
       setProgressMessage('✅ 全ての処理が完了しました');
@@ -205,6 +214,15 @@ export const UploadPage: React.FC = () => {
         </div>
       </div>
 
+      {/* 複数アップロード注意事項 */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6 text-sm text-amber-800">
+        <p className="font-semibold mb-1">⚠️ 複数ファイルをアップロードする場合：</p>
+        <ol className="list-decimal list-inside space-y-0.5">
+          <li>同じ会社の納品書のみをまとめてください</li>
+          <li>同じ対象年月の納品書のみをまとめてください</li>
+        </ol>
+      </div>
+
       {/* File Upload */}
       <div
         {...getRootProps()}
@@ -305,7 +323,7 @@ export const UploadPage: React.FC = () => {
           {/* PDF Preview */}
           {currentInvoicePath && (
             <PDFPreviewImage
-              deliveryPdfUrl={currentDeliveryPdf}
+              deliveryPdfUrls={deliveryPdfUrls}
               invoicePdfUrl={currentInvoicePath}
             />
           )}

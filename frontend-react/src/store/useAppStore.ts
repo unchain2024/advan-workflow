@@ -14,6 +14,7 @@ interface AppState {
   currentInvoicePath: string | null;
   currentYearMonth: string | null;
   currentDeliveryPdf: string | null;
+  deliveryPdfUrls: string[];
 
   // アクション
   setSalesPerson: (name: string) => void;
@@ -27,6 +28,7 @@ interface AppState {
   setCurrentInvoicePath: (path: string | null) => void;
   setCurrentYearMonth: (yearMonth: string | null) => void;
   setCurrentDeliveryPdf: (path: string | null) => void;
+  addDeliveryPdfUrl: (url: string) => void;
 
   // 処理結果をまとめてセット
   setProcessResult: (result: {
@@ -54,6 +56,7 @@ export const useAppStore = create<AppState>((set) => ({
   currentInvoicePath: null,
   currentYearMonth: null,
   currentDeliveryPdf: null,
+  deliveryPdfUrls: [],
 
   // アクション
   setSalesPerson: (name) => set({ salesPerson: name }),
@@ -67,6 +70,7 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentInvoicePath: (path) => set({ currentInvoicePath: path }),
   setCurrentYearMonth: (yearMonth) => set({ currentYearMonth: yearMonth }),
   setCurrentDeliveryPdf: (path) => set({ currentDeliveryPdf: path }),
+  addDeliveryPdfUrl: (url) => set((state) => ({ deliveryPdfUrls: [...state.deliveryPdfUrls, url] })),
 
   setProcessResult: (result) => set({
     currentDeliveryNote: result.deliveryNote,
@@ -90,5 +94,6 @@ export const useAppStore = create<AppState>((set) => ({
     currentInvoicePath: null,
     currentYearMonth: null,
     currentDeliveryPdf: null,
+    deliveryPdfUrls: [],
   }),
 }));
