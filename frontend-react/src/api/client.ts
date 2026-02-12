@@ -27,10 +27,16 @@ const apiClient = axios.create({
 
 export const processPDF = async (
   file: File,
+  salesPerson: string,
+  year: number,
+  month: number,
   onProgress?: (progress: number, message: string) => void
 ): Promise<ProcessPDFResponse> => {
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('sales_person', salesPerson);
+  formData.append('year', year.toString());
+  formData.append('month', month.toString());
 
   // シンプルなPOSTリクエスト（プログレスバーは模擬）
   if (onProgress) {
@@ -132,7 +138,6 @@ export const savePurchaseRecord = async (
   return response.data;
 };
 
-// 月次請求書生成API
 export const generateMonthlyInvoice = async (
   companyName: string,
   yearMonth: string
@@ -141,5 +146,17 @@ export const generateMonthlyInvoice = async (
     company_name: companyName,
     year_month: yearMonth,
   });
+  return response.data;
+};
+
+// DB会社名一覧取得API
+export const getDBCompanies = async (): Promise<{ companies: string[] }> => {
+  const response = await apiClient.get<{ companies: string[] }>('/db-companies');
+  return response.data;
+};
+
+// DB担当者名一覧取得API
+export const getDBSalesPersons = async (): Promise<{ sales_persons: string[] }> => {
+  const response = await apiClient.get<{ sales_persons: string[] }>('/db-sales-persons');
   return response.data;
 };

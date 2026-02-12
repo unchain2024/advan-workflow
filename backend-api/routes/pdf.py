@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from pdf2image import convert_from_path
@@ -64,6 +64,7 @@ class ProcessPDFResponse(BaseModel):
     invoice_url: str
     delivery_pdf_url: str
     year_month: str
+    sales_person: str = ""
 
 
 class RegenerateInvoiceRequest(BaseModel):
@@ -89,7 +90,12 @@ def extract_year_month(date_str: str) -> str:
 
 
 @router.post("/process-pdf", response_model=ProcessPDFResponse)
-async def process_pdf(file: UploadFile = File(...)):
+async def process_pdf(
+    file: UploadFile = File(...),
+    sales_person: str = Form(""),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+):
     """納品書PDFを処理して請求書を生成"""
 
     # ファイル形式チェック
@@ -130,8 +136,11 @@ async def process_pdf(file: UploadFile = File(...)):
         sheets_client = GoogleSheetsClient()
         company_info = sheets_client.get_company_info(delivery_note.company_name)
 
-        # 4. 前月の請求情報を取得
-        year_month = extract_year_month(delivery_note.date)
+        # 4. 前月の請求情報を取得（ユーザー指定の年月を優先）
+        if year and month:
+            year_month = f"{year}-{int(month):02d}"
+        else:
+            year_month = extract_year_month(delivery_note.date)
         previous_billing = sheets_client.get_previous_billing(
             delivery_note.company_name, year_month
         )
@@ -156,13 +165,17 @@ async def process_pdf(file: UploadFile = File(...)):
         from src.database import MonthlyItemsDB
         from src.utils import parse_year_month
 
-        year_month_str = parse_year_month(delivery_note.date)
+        if year and month:
+            year_month_str = f"{year}年{month}月"
+        else:
+            year_month_str = parse_year_month(delivery_note.date)
         if year_month_str:
             db = MonthlyItemsDB()
             db.save_monthly_items(
                 company_name=delivery_note.company_name,
                 year_month=year_month_str,
                 delivery_note=delivery_note,
+                sales_person=sales_person,
             )
 
         # レスポンス作成（キャッシュバスティング用にタイムスタンプ追加）
@@ -212,6 +225,7 @@ async def process_pdf(file: UploadFile = File(...)):
             invoice_url=invoice_url,
             delivery_pdf_url=delivery_pdf_url,
             year_month=year_month,
+            sales_person=sales_person,
         )
 
     except Exception as e:
@@ -518,3 +532,32 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
         }
         print(f"ERROR in generate_monthly_invoice: {error_detail}")
         raise HTTPException(status_code=500, detail=error_detail)
+
+
+class DBCompaniesResponse(BaseModel):
+    companies: list[str]
+
+
+@router.get("/db-companies", response_model=DBCompaniesResponse)
+async def get_db_companies():
+    """月次明細DBに保存されている会社名一覧を取得"""
+    from src.database import MonthlyItemsDB
+
+    db = MonthlyItemsDB()
+    companies = db.get_distinct_companies()
+    return DBCompaniesResponse(companies=companies)
+
+
+class DBSalesPersonsResponse(BaseModel):
+    sales_persons: list[str]
+
+
+@router.get("/db-sales-persons", response_model=DBSalesPersonsResponse)
+async def get_db_sales_persons():
+    """月次明細DBに保存されている担当者名一覧を取得"""
+    from src.database import MonthlyItemsDB
+
+    db = MonthlyItemsDB()
+    sales_persons = db.get_distinct_sales_persons()
+    return DBSalesPersonsResponse(sales_persons=sales_persons)
+

@@ -50,6 +50,7 @@ class MonthlyItemsDB:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     year_month TEXT NOT NULL,
                     company_name TEXT NOT NULL,
+                    sales_person TEXT NOT NULL DEFAULT '',
                     items_json TEXT NOT NULL,
                     subtotal INTEGER NOT NULL,
                     tax INTEGER NOT NULL,
@@ -65,12 +66,20 @@ class MonthlyItemsDB:
                 CREATE INDEX IF NOT EXISTS idx_year_month_company
                 ON monthly_items(year_month, company_name)
             """)
+            # 既存DBのマイグレーション: sales_personカラムを追加
+            cursor.execute("PRAGMA table_info(monthly_items)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "sales_person" not in columns:
+                cursor.execute(
+                    "ALTER TABLE monthly_items ADD COLUMN sales_person TEXT NOT NULL DEFAULT ''"
+                )
 
     def save_monthly_items(
         self,
         company_name: str,
         year_month: str,
         delivery_note: DeliveryNote,
+        sales_person: str = "",
     ):
         """月次明細DBに納品書データを保存（月+会社キーで集約）
 
@@ -90,6 +99,9 @@ class MonthlyItemsDB:
         """
         # 会社名を正規化
         normalized_company = normalize_company_name(company_name)
+
+        # 担当者名のホワイトスペースを除去（日本語名はスペースなし）
+        sales_person_clean = "".join(sales_person.split())
 
         # 新しい明細データを作成
         new_item = {
@@ -152,6 +164,7 @@ class MonthlyItemsDB:
                         tax = ?,
                         total = ?,
                         slip_numbers = ?,
+                        sales_person = ?,
                         updated_at = ?
                     WHERE id = ?
                 """, (
@@ -160,6 +173,7 @@ class MonthlyItemsDB:
                     existing_tax + delivery_note.tax,
                     existing_total + delivery_note.total,
                     updated_slips,
+                    sales_person_clean,
                     current_time,
                     existing_row["id"],
                 ))
@@ -171,11 +185,12 @@ class MonthlyItemsDB:
 
                 cursor.execute("""
                     INSERT INTO monthly_items
-                    (year_month, company_name, items_json, subtotal, tax, total, slip_numbers, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (year_month, company_name, sales_person, items_json, subtotal, tax, total, slip_numbers, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     year_month,
                     company_name,
+                    sales_person_clean,
                     items_json,
                     delivery_note.subtotal,
                     delivery_note.tax,
@@ -298,3 +313,35 @@ class MonthlyItemsDB:
                 }
 
             return None
+
+    def get_distinct_companies(self) -> list[str]:
+        """月次明細DBに保存されているすべての会社名を取得
+
+        Returns:
+            list[str]: ユニークな会社名のリスト（ソート済み）
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT company_name
+                FROM monthly_items
+                ORDER BY company_name
+            """)
+            return [row["company_name"] for row in cursor.fetchall()]
+
+    def get_distinct_sales_persons(self) -> list[str]:
+        """月次明細DBに保存されているすべての担当者名を取得
+
+        Returns:
+            list[str]: ユニークな担当者名のリスト（ソート済み、空文字を除く）
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT sales_person
+                FROM monthly_items
+                WHERE sales_person != ''
+                ORDER BY sales_person
+            """)
+            return [row["sales_person"] for row in cursor.fetchall()]
+

@@ -50,6 +50,7 @@ export interface ProcessPDFResponse {
   invoice_url: string;
   delivery_pdf_url: string;
   year_month: string;
+  sales_person: string;
 }
 
 export interface CompaniesAndMonthsResponse {

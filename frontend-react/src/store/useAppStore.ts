@@ -3,6 +3,9 @@ import type { DeliveryNote, CompanyInfo, PreviousBilling } from '../types';
 
 interface AppState {
   // セッション状態
+  salesPerson: string;
+  selectedYear: number;
+  selectedMonth: number;
   showEditForm: boolean;
   spreadsheetSaved: boolean;
   currentDeliveryNote: DeliveryNote | null;
@@ -13,6 +16,9 @@ interface AppState {
   currentDeliveryPdf: string | null;
 
   // アクション
+  setSalesPerson: (name: string) => void;
+  setSelectedYear: (year: number) => void;
+  setSelectedMonth: (month: number) => void;
   setShowEditForm: (show: boolean) => void;
   setSpreadsheetSaved: (saved: boolean) => void;
   setCurrentDeliveryNote: (note: DeliveryNote | null) => void;
@@ -37,6 +43,9 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set) => ({
   // 初期状態
+  salesPerson: '',
+  selectedYear: new Date().getFullYear(),
+  selectedMonth: new Date().getMonth() + 1,
   showEditForm: false,
   spreadsheetSaved: false,
   currentDeliveryNote: null,
@@ -47,6 +56,9 @@ export const useAppStore = create<AppState>((set) => ({
   currentDeliveryPdf: null,
 
   // アクション
+  setSalesPerson: (name) => set({ salesPerson: name }),
+  setSelectedYear: (year) => set({ selectedYear: year }),
+  setSelectedMonth: (month) => set({ selectedMonth: month }),
   setShowEditForm: (show) => set({ showEditForm: show }),
   setSpreadsheetSaved: (saved) => set({ spreadsheetSaved: saved }),
   setCurrentDeliveryNote: (note) => set({ currentDeliveryNote: note }),
@@ -67,6 +79,9 @@ export const useAppStore = create<AppState>((set) => ({
   }),
 
   clearAll: () => set({
+    salesPerson: '',
+    selectedYear: new Date().getFullYear(),
+    selectedMonth: new Date().getMonth() + 1,
     showEditForm: false,
     spreadsheetSaved: false,
     currentDeliveryNote: null,

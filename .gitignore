@@ -16,3 +16,7 @@ __pycache__
 *.db
 
 .env*.local
+credemtials.json
+env
+README.md
+.gitignore
