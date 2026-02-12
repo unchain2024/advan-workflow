@@ -51,6 +51,10 @@ export interface ProcessPDFResponse {
   delivery_pdf_url: string;
   year_month: string;
   sales_person: string;
+  cumulative_subtotal: number;
+  cumulative_tax: number;
+  cumulative_total: number;
+  cumulative_items_count: number;
 }
 
 export interface CompaniesAndMonthsResponse {

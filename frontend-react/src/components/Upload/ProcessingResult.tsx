@@ -1,21 +1,38 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { MetricCard } from '../Common/MetricCard';
 import { Accordion } from '../Common/Accordion';
 import { Message } from '../Common/Message';
-import type { DeliveryNote, CompanyInfo, PreviousBilling } from '../../types';
+import type { DeliveryNote, DeliveryItem, CompanyInfo, PreviousBilling } from '../../types';
 
 interface ProcessingResultProps {
   deliveryNote: DeliveryNote;
   companyInfo: CompanyInfo | null;
   previousBilling: PreviousBilling;
+  cumulativeSubtotal?: number;
+  cumulativeTax?: number;
+  cumulativeTotal?: number;
+  cumulativeItemsCount?: number;
+  cumulativeItems?: DeliveryItem[];
 }
 
 export const ProcessingResult: React.FC<ProcessingResultProps> = ({
   deliveryNote,
   companyInfo,
   previousBilling,
+  cumulativeSubtotal,
+  cumulativeTax,
+  cumulativeTotal,
+  cumulativeItemsCount,
+  cumulativeItems,
 }) => {
-  const totalAmount = previousBilling.carried_over + deliveryNote.subtotal + deliveryNote.tax;
+  // 累積値があればそれを使用、なければ単一ファイルの値を使用
+  const displaySubtotal = cumulativeSubtotal ?? deliveryNote.subtotal;
+  const displayTax = cumulativeTax ?? deliveryNote.tax;
+  const displayTotal = cumulativeTotal ?? deliveryNote.total;
+  const displayItemsCount = cumulativeItemsCount ?? deliveryNote.items.length;
+  const [itemsExpanded, setItemsExpanded] = useState(false);
+
+  const totalAmount = previousBilling.carried_over + displaySubtotal + displayTax;
 
   return (
     <div className="space-y-6">
@@ -35,33 +52,42 @@ export const ProcessingResult: React.FC<ProcessingResultProps> = ({
 
           {/* 列2 */}
           <div>
-            <MetricCard label="売上" value={`¥${deliveryNote.subtotal.toLocaleString()}`} />
-            <MetricCard label="消費税" value={`¥${deliveryNote.tax.toLocaleString()}`} />
+            <MetricCard label="売上" value={`¥${displaySubtotal.toLocaleString()}`} />
+            <MetricCard label="消費税" value={`¥${displayTax.toLocaleString()}`} />
           </div>
 
           {/* 列3 */}
           <div>
-            <MetricCard label="合計" value={`¥${deliveryNote.total.toLocaleString()}`} />
-            <MetricCard label="明細数" value={deliveryNote.items.length} />
+            <MetricCard label="合計" value={`¥${displayTotal.toLocaleString()}`} />
+            <MetricCard label="明細数" value={displayItemsCount} />
           </div>
         </div>
 
         {/* 明細の詳細 */}
-        {deliveryNote.items.length > 0 && (
-          <div className="mt-4 p-4 bg-gray-50 rounded">
-            <p className="font-bold mb-2">明細:</p>
-            <div className="font-mono text-sm space-y-1">
-              {deliveryNote.items.slice(0, 5).map((item, index) => (
-                <div key={index}>
-                  {index + 1}. {item.product_name}: {item.quantity}個 × ¥{item.unit_price.toLocaleString()} = ¥{item.amount.toLocaleString()}
-                </div>
-              ))}
-              {deliveryNote.items.length > 5 && (
-                <div className="text-gray-500">... 他 {deliveryNote.items.length - 5} 件</div>
+        {(() => {
+          const displayItems = cumulativeItems && cumulativeItems.length > 0 ? cumulativeItems : deliveryNote.items;
+          const visibleItems = itemsExpanded ? displayItems : displayItems.slice(0, 5);
+          return displayItems.length > 0 && (
+            <div className="mt-4 p-4 bg-gray-50 rounded">
+              <p className="font-bold mb-2">明細:</p>
+              <div className="font-mono text-sm space-y-1">
+                {visibleItems.map((item, index) => (
+                  <div key={index}>
+                    {index + 1}. {item.product_name}: {item.quantity}個 × ¥{item.unit_price.toLocaleString()} = ¥{item.amount.toLocaleString()}
+                  </div>
+                ))}
+              </div>
+              {displayItems.length > 5 && (
+                <button
+                  onClick={() => setItemsExpanded(!itemsExpanded)}
+                  className="mt-2 text-sm text-blue-600 hover:text-blue-800 cursor-pointer font-medium"
+                >
+                  {itemsExpanded ? '▲ 折りたたむ' : `▼ 他 ${displayItems.length - 5} 件を表示`}
+                </button>
               )}
             </div>
-          </div>
-        )}
+          );
+        })()}
       </Accordion>
 
       {/* 会社情報 */}
@@ -114,8 +140,8 @@ export const ProcessingResult: React.FC<ProcessingResultProps> = ({
           <p className="font-bold">今回御請求額: ¥{totalAmount.toLocaleString()}</p>
           <ul className="ml-4 space-y-1 text-gray-700">
             <li>- 差引繰越残高: ¥{previousBilling.carried_over.toLocaleString()}</li>
-            <li>- 今回売上: ¥{deliveryNote.subtotal.toLocaleString()}</li>
-            <li>- 消費税: ¥{deliveryNote.tax.toLocaleString()}</li>
+            <li>- 今回売上: ¥{displaySubtotal.toLocaleString()}</li>
+            <li>- 消費税: ¥{displayTax.toLocaleString()}</li>
           </ul>
         </div>
       </Accordion>

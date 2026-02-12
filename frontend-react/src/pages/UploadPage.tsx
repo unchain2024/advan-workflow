@@ -38,6 +38,12 @@ export const UploadPage: React.FC = () => {
     setSpreadsheetSaved,
     addDeliveryPdfUrl,
     deliveryPdfUrls,
+    cumulativeSubtotal,
+    cumulativeTax,
+    cumulativeTotal,
+    cumulativeItemsCount,
+    cumulativeItems,
+    addCumulativeItems,
     clearAll,
   } = useAppStore();
 
@@ -93,11 +99,16 @@ export const UploadPage: React.FC = () => {
           previousBilling: result.previous_billing,
           invoicePath: result.invoice_url,
           yearMonth: result.year_month,
+          cumulativeSubtotal: result.cumulative_subtotal,
+          cumulativeTax: result.cumulative_tax,
+          cumulativeTotal: result.cumulative_total,
+          cumulativeItemsCount: result.cumulative_items_count,
         });
 
         // 納品書PDFのURLを保存（バックエンドから返されたURL）
         useAppStore.setState({ currentDeliveryPdf: result.delivery_pdf_url });
         addDeliveryPdfUrl(result.delivery_pdf_url);
+        addCumulativeItems(result.delivery_note.items);
       }
 
       setProgressMessage('✅ 全ての処理が完了しました');
@@ -318,6 +329,11 @@ export const UploadPage: React.FC = () => {
             deliveryNote={currentDeliveryNote}
             companyInfo={currentCompanyInfo}
             previousBilling={currentPreviousBilling}
+            cumulativeSubtotal={cumulativeSubtotal}
+            cumulativeTax={cumulativeTax}
+            cumulativeTotal={cumulativeTotal}
+            cumulativeItemsCount={cumulativeItemsCount}
+            cumulativeItems={cumulativeItems}
           />
 
           {/* PDF Preview */}
@@ -357,6 +373,8 @@ export const UploadPage: React.FC = () => {
               isSaved={spreadsheetSaved}
               onSaveComplete={() => setSpreadsheetSaved(true)}
               invoicePath={currentInvoicePath}
+              cumulativeSubtotal={cumulativeSubtotal}
+              cumulativeTax={cumulativeTax}
             />
           )}
         </div>

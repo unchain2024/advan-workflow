@@ -65,6 +65,10 @@ class ProcessPDFResponse(BaseModel):
     delivery_pdf_url: str
     year_month: str
     sales_person: str = ""
+    cumulative_subtotal: int = 0
+    cumulative_tax: int = 0
+    cumulative_total: int = 0
+    cumulative_items_count: int = 0
 
 
 class RegenerateInvoiceRequest(BaseModel):
@@ -221,6 +225,23 @@ async def process_pdf(
         invoice_url = f"/output/{invoice_filename}?t={timestamp}"
         delivery_pdf_url = f"/output/{delivery_filename}?t={timestamp}"
 
+        # 累積データを計算
+        cumulative_subtotal = 0
+        cumulative_tax = 0
+        cumulative_total = 0
+        cumulative_items_count = 0
+        if year_month_str and all_notes:
+            for note in all_notes:
+                cumulative_subtotal += note.subtotal
+                cumulative_tax += note.tax
+                cumulative_total += note.total
+                cumulative_items_count += len(note.items)
+        else:
+            cumulative_subtotal = delivery_note.subtotal
+            cumulative_tax = delivery_note.tax
+            cumulative_total = delivery_note.total
+            cumulative_items_count = len(delivery_note.items)
+
         return ProcessPDFResponse(
             delivery_note=DeliveryNoteResponse(
                 date=delivery_note.date,
@@ -264,6 +285,10 @@ async def process_pdf(
             delivery_pdf_url=delivery_pdf_url,
             year_month=year_month,
             sales_person=sales_person,
+            cumulative_subtotal=cumulative_subtotal,
+            cumulative_tax=cumulative_tax,
+            cumulative_total=cumulative_total,
+            cumulative_items_count=cumulative_items_count,
         )
 
     except Exception as e:

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DeliveryNote, CompanyInfo, PreviousBilling } from '../types';
+import type { DeliveryNote, DeliveryItem, CompanyInfo, PreviousBilling } from '../types';
 
 interface AppState {
   // セッション状態
@@ -15,6 +15,11 @@ interface AppState {
   currentYearMonth: string | null;
   currentDeliveryPdf: string | null;
   deliveryPdfUrls: string[];
+  cumulativeSubtotal: number;
+  cumulativeTax: number;
+  cumulativeTotal: number;
+  cumulativeItemsCount: number;
+  cumulativeItems: DeliveryItem[];
 
   // アクション
   setSalesPerson: (name: string) => void;
@@ -29,6 +34,7 @@ interface AppState {
   setCurrentYearMonth: (yearMonth: string | null) => void;
   setCurrentDeliveryPdf: (path: string | null) => void;
   addDeliveryPdfUrl: (url: string) => void;
+  addCumulativeItems: (items: DeliveryItem[]) => void;
 
   // 処理結果をまとめてセット
   setProcessResult: (result: {
@@ -37,6 +43,10 @@ interface AppState {
     previousBilling: PreviousBilling;
     invoicePath: string;
     yearMonth: string;
+    cumulativeSubtotal: number;
+    cumulativeTax: number;
+    cumulativeTotal: number;
+    cumulativeItemsCount: number;
   }) => void;
 
   // すべてクリア
@@ -57,6 +67,11 @@ export const useAppStore = create<AppState>((set) => ({
   currentYearMonth: null,
   currentDeliveryPdf: null,
   deliveryPdfUrls: [],
+  cumulativeSubtotal: 0,
+  cumulativeTax: 0,
+  cumulativeTotal: 0,
+  cumulativeItemsCount: 0,
+  cumulativeItems: [],
 
   // アクション
   setSalesPerson: (name) => set({ salesPerson: name }),
@@ -71,6 +86,7 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentYearMonth: (yearMonth) => set({ currentYearMonth: yearMonth }),
   setCurrentDeliveryPdf: (path) => set({ currentDeliveryPdf: path }),
   addDeliveryPdfUrl: (url) => set((state) => ({ deliveryPdfUrls: [...state.deliveryPdfUrls, url] })),
+  addCumulativeItems: (items) => set((state) => ({ cumulativeItems: [...state.cumulativeItems, ...items] })),
 
   setProcessResult: (result) => set({
     currentDeliveryNote: result.deliveryNote,
@@ -78,6 +94,10 @@ export const useAppStore = create<AppState>((set) => ({
     currentPreviousBilling: result.previousBilling,
     currentInvoicePath: result.invoicePath,
     currentYearMonth: result.yearMonth,
+    cumulativeSubtotal: result.cumulativeSubtotal,
+    cumulativeTax: result.cumulativeTax,
+    cumulativeTotal: result.cumulativeTotal,
+    cumulativeItemsCount: result.cumulativeItemsCount,
     spreadsheetSaved: false,
     showEditForm: false,
   }),
@@ -95,5 +115,10 @@ export const useAppStore = create<AppState>((set) => ({
     currentYearMonth: null,
     currentDeliveryPdf: null,
     deliveryPdfUrls: [],
+    cumulativeSubtotal: 0,
+    cumulativeTax: 0,
+    cumulativeTotal: 0,
+    cumulativeItemsCount: 0,
+    cumulativeItems: [],
   }),
 }));

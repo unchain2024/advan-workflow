@@ -12,6 +12,8 @@ interface SpreadsheetSaveProps {
   isSaved: boolean;
   onSaveComplete: () => void;
   invoicePath: string;
+  cumulativeSubtotal?: number;
+  cumulativeTax?: number;
 }
 
 export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
@@ -21,19 +23,33 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
   isSaved,
   onSaveComplete,
   invoicePath,
+  cumulativeSubtotal,
+  cumulativeTax,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 累積値があればそれを使用、なければ単一ファイルの値を使用
+  const displaySubtotal = cumulativeSubtotal ?? deliveryNote.subtotal;
+  const displayTax = cumulativeTax ?? deliveryNote.tax;
 
   const handleSave = async () => {
     setIsLoading(true);
     setError(null);
 
     try {
+      // 累積値を使ってdeliveryNoteを上書きして送信
+      const billingNote = {
+        ...deliveryNote,
+        subtotal: displaySubtotal,
+        tax: displayTax,
+        total: displaySubtotal + displayTax,
+      };
+
       const response = await saveBilling({
         company_name: deliveryNote.company_name,
         year_month: yearMonth,
-        delivery_note: deliveryNote,
+        delivery_note: billingNote,
         previous_billing: previousBilling,
       });
 
@@ -74,11 +90,11 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
           <div className="grid grid-cols-2 gap-4 mb-6">
             <MetricCard
               label="発生（売上）"
-              value={`¥${deliveryNote.subtotal.toLocaleString()}`}
+              value={`¥${displaySubtotal.toLocaleString()}`}
             />
             <MetricCard
               label="消費税"
-              value={`¥${deliveryNote.tax.toLocaleString()}`}
+              value={`¥${displayTax.toLocaleString()}`}
             />
           </div>
 
