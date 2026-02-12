@@ -3,8 +3,10 @@ import os
 import sys
 from pathlib import Path
 
-# プロジェクトルートを追加（既存のsrc/を使用するため）
+# backend-api/ を追加（routes等のインポート用）
 sys.path.insert(0, str(Path(__file__).parent))
+# プロジェクトルートを追加（src/を使用するため）
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
