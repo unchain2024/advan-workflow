@@ -6,7 +6,7 @@ services:
     region: oregon  # または singapore (アジア最寄り)
     plan: free
     buildCommand: "pip install -r requirements.txt && cd frontend-react && npm ci && npm run build"
-    startCommand: "cd backend-api && python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+    startCommand: "python -m uvicorn backend-api.main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: ENVIRONMENT
         value: production
