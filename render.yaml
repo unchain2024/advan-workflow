@@ -4,10 +4,16 @@ services:
     name: advan-workflow
     env: python
     region: oregon  # または singapore (アジア最寄り)
-    plan: free
+    plan: starter
+    disk:
+      name: advan-data
+      mountPath: /data
+      sizeGB: 1
     buildCommand: "pip install -r requirements.txt && cd frontend-react && npm ci && npm run build"
     startCommand: "python -m uvicorn backend-api.main:app --host 0.0.0.0 --port $PORT"
     envVars:
+      - key: DATABASE_PATH
+        value: /data/monthly_items.db
       - key: ENVIRONMENT
         value: production
       - key: PYTHON_VERSION
