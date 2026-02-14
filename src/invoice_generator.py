@@ -200,11 +200,22 @@ class InvoiceGenerator:
                 quantity=0,
                 unit_price=0,
                 amount=0,
+                date=note.date,
             )
             all_items.append(separator)
 
-            # 納品書の明細を追加
-            all_items.extend(note.items)
+            # 納品書の明細を追加（各アイテムに納品日を設定）
+            for item in note.items:
+                item_with_date = DeliveryItem(
+                    slip_number=item.slip_number,
+                    product_code=item.product_code,
+                    product_name=item.product_name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    amount=item.amount,
+                    date=note.date,
+                )
+                all_items.append(item_with_date)
 
         # 全納品書の合計を計算
         total_subtotal = sum(note.subtotal for note in delivery_notes)
@@ -460,12 +471,13 @@ class InvoiceGenerator:
             data_y -= row_height
             current_x = x
 
-            # 日付（data.dateから取得、YY/MM/DD形式に変換）
+            # 日付（アイテムにdateがあればそれを使用、なければdata.dateを使用）
+            item_date = getattr(item, 'date', '') or data.date
             date_str = ""
-            if data.date:
+            if item_date:
                 try:
                     # YYYY/MM/DD → YY/MM/DD に変換
-                    parts = data.date.split("/")
+                    parts = item_date.split("/")
                     if len(parts) == 3:
                         # YYYYが4桁の場合のみ下2桁を取得
                         year = parts[0]
@@ -474,10 +486,10 @@ class InvoiceGenerator:
                         else:
                             date_str = f"{year}/{parts[1].zfill(2)}/{parts[2].zfill(2)}"
                     else:
-                        date_str = data.date
+                        date_str = item_date
                 except Exception as e:
-                    print(f"日付変換エラー: {data.date} -> {e}")
-                    date_str = data.date
+                    print(f"日付変換エラー: {item_date} -> {e}")
+                    date_str = item_date
 
             c.rect(current_x, data_y, columns[0][1], row_height)
             c.drawString(current_x + 1 * mm, data_y + 1.5 * mm, date_str)

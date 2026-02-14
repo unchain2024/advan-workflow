@@ -25,11 +25,9 @@ export const Accordion: React.FC<AccordionProps> = ({
           {isOpen ? '▼' : '▶'}
         </span>
       </button>
-      {isOpen && (
-        <div className="p-4 border-t border-gray-200">
-          {children}
-        </div>
-      )}
+      <div className={isOpen ? 'p-4 border-t border-gray-200' : 'hidden'}>
+        {children}
+      </div>
     </div>
   );
 };

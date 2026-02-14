@@ -14,6 +14,7 @@ class DeliveryItem:
     quantity: int  # 数量
     unit_price: int  # 単価
     amount: int  # 金額
+    date: str = ""  # 日付（月次請求書で個別の納品日を表示するため）
 
 
 @dataclass

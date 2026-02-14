@@ -74,6 +74,41 @@ class MonthlyItemsDB:
                     "ALTER TABLE monthly_items ADD COLUMN sales_person TEXT NOT NULL DEFAULT ''"
                 )
 
+    def _find_record_by_normalized_name(self, cursor, year_month: str, company_name: str):
+        """正規化した会社名で既存レコードを検索
+
+        まず完全一致を試み、見つからなければ正規化名で部分一致検索する。
+        """
+        # まず完全一致を試みる
+        cursor.execute("""
+            SELECT id, items_json, subtotal, tax, total, slip_numbers, company_name
+            FROM monthly_items
+            WHERE year_month = ? AND company_name = ?
+        """, (year_month, company_name))
+        row = cursor.fetchone()
+        if row:
+            return row
+
+        # 完全一致がなければ、正規化名で検索
+        normalized_search = normalize_company_name(company_name)
+        if not normalized_search:
+            return None
+
+        cursor.execute("""
+            SELECT id, items_json, subtotal, tax, total, slip_numbers, company_name
+            FROM monthly_items
+            WHERE year_month = ?
+        """, (year_month,))
+        rows = cursor.fetchall()
+
+        for row in rows:
+            normalized_db = normalize_company_name(row["company_name"])
+            if normalized_db and (normalized_search in normalized_db or normalized_db in normalized_search):
+                print(f"    正規化マッチ: '{company_name}' → DB内 '{row['company_name']}'")
+                return row
+
+        return None
+
     def save_monthly_items(
         self,
         company_name: str,
@@ -125,13 +160,9 @@ class MonthlyItemsDB:
             cursor = conn.cursor()
 
             # 既存レコードを検索（正規化した会社名でマッチング）
-            cursor.execute("""
-                SELECT id, items_json, subtotal, tax, total, slip_numbers
-                FROM monthly_items
-                WHERE year_month = ? AND company_name = ?
-            """, (year_month, company_name))
-
-            existing_row = cursor.fetchone()
+            existing_row = self._find_record_by_normalized_name(
+                cursor, year_month, company_name
+            )
 
             if existing_row:
                 # 既存レコードを更新
@@ -239,14 +270,10 @@ class MonthlyItemsDB:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # レコードを検索
-            cursor.execute("""
-                SELECT items_json
-                FROM monthly_items
-                WHERE year_month = ? AND company_name = ?
-            """, (year_month, company_name))
-
-            row = cursor.fetchone()
+            # 正規化した会社名でレコードを検索
+            row = self._find_record_by_normalized_name(
+                cursor, year_month, company_name
+            )
 
             if row:
                 # 明細JSONをパース
@@ -314,13 +341,10 @@ class MonthlyItemsDB:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT subtotal, tax, total, slip_numbers
-                FROM monthly_items
-                WHERE year_month = ? AND company_name = ?
-            """, (year_month, company_name))
-
-            row = cursor.fetchone()
+            # 正規化した会社名でレコードを検索
+            row = self._find_record_by_normalized_name(
+                cursor, year_month, company_name
+            )
 
             if row:
                 slip_numbers = [s.strip() for s in row["slip_numbers"].split(",") if s.strip()]
@@ -333,6 +357,115 @@ class MonthlyItemsDB:
                 }
 
             return None
+
+    def update_monthly_item(
+        self,
+        company_name: str,
+        year_month: str,
+        delivery_note: DeliveryNote,
+        sales_person: str = "",
+    ):
+        """月次明細DBの特定の納品書データを更新（編集後のデータで置換）
+
+        slip_numberで既存の納品書エントリを特定し、新しいデータで置換する。
+        小計・消費税・合計も再計算する。
+
+        Args:
+            company_name: 会社名
+            year_month: 年月（YYYY年M月形式）
+            delivery_note: 更新後の納品書データ
+            sales_person: 担当者名
+        """
+        sales_person_clean = "".join(sales_person.split())
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+        # 更新用の明細データ
+        updated_item = {
+            "date": delivery_note.date,
+            "slip_number": delivery_note.slip_number,
+            "items": [
+                {
+                    "product_code": item.product_code,
+                    "product_name": item.product_name,
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price,
+                    "amount": item.amount,
+                }
+                for item in delivery_note.items
+            ],
+        }
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 正規化した会社名で既存レコードを検索
+            existing_row = self._find_record_by_normalized_name(
+                cursor, year_month, company_name
+            )
+
+            if not existing_row:
+                print(f"    月次明細DB: 更新対象が見つかりません ({company_name}, {year_month})")
+                # 見つからない場合は新規保存
+                self.save_monthly_items(company_name, year_month, delivery_note, sales_person)
+                return
+
+            # 既存の明細JSONをパース
+            try:
+                items_list = json.loads(existing_row["items_json"])
+            except json.JSONDecodeError:
+                items_list = []
+
+            # slip_numberで既存エントリを探して置換
+            found = False
+            old_subtotal = 0
+            old_tax = 0
+            for i, item_data in enumerate(items_list):
+                if item_data.get("slip_number") == delivery_note.slip_number:
+                    # 古いデータの小計を計算（差分用）
+                    old_amounts = sum(
+                        it.get("amount", 0) for it in item_data.get("items", [])
+                    )
+                    old_subtotal = old_amounts
+                    old_tax = int(old_amounts * 0.1)
+                    # 新しいデータで置換
+                    items_list[i] = updated_item
+                    found = True
+                    print(f"    月次明細DB: slip_number '{delivery_note.slip_number}' を更新")
+                    break
+
+            if not found:
+                print(f"    月次明細DB: slip_number '{delivery_note.slip_number}' が見つかりません、追加します")
+                items_list.append(updated_item)
+                old_subtotal = 0
+                old_tax = 0
+
+            updated_json = json.dumps(items_list, ensure_ascii=False)
+
+            # 小計・消費税・合計を再計算（差分を反映）
+            new_db_subtotal = existing_row["subtotal"] - old_subtotal + delivery_note.subtotal
+            new_db_tax = existing_row["tax"] - old_tax + delivery_note.tax
+            new_db_total = new_db_subtotal + new_db_tax
+
+            cursor.execute("""
+                UPDATE monthly_items
+                SET items_json = ?,
+                    subtotal = ?,
+                    tax = ?,
+                    total = ?,
+                    sales_person = ?,
+                    updated_at = ?
+                WHERE id = ?
+            """, (
+                updated_json,
+                new_db_subtotal,
+                new_db_tax,
+                new_db_total,
+                sales_person_clean,
+                current_time,
+                existing_row["id"],
+            ))
+
+            print(f"    月次明細DB更新完了: {company_name} ({year_month}) - 小計: {old_subtotal} → {delivery_note.subtotal}")
 
     def get_distinct_companies(self) -> list[str]:
         """月次明細DBに保存されているすべての会社名を取得

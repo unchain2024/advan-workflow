@@ -112,7 +112,16 @@ export const EditForm: React.FC<EditFormProps> = ({
         tax: Number(data.tax),
         total: Number(data.subtotal) + Number(data.tax),
         payment_received: Number(data.payment_received),
-        items: items.filter((item: any) => item.product_name.trim()),
+        items: items
+          .filter((item: any) => item.product_name.trim())
+          .map((item: any) => ({
+            slip_number: item.slip_number || '',
+            product_code: item.product_code || '',
+            product_name: item.product_name,
+            quantity: Number(item.quantity) || 0,
+            unit_price: Number(item.unit_price) || 0,
+            amount: Number(item.amount) || 0,
+          })),
       };
 
       const editedPreviousBilling: PreviousBilling = {

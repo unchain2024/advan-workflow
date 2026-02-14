@@ -257,6 +257,44 @@ class GoogleSheetsClient:
 
         return credentials
 
+    def get_canonical_company_name(self, company_name: str, year: Optional[int] = None) -> Optional[str]:
+        """売上集計表から正規の会社名を取得
+
+        LLMが抽出した会社名を、スプレッドシートのColumn Aに記載されている
+        正確な会社名に変換する。
+
+        Args:
+            company_name: LLMが抽出した会社名
+            year: 対象年（Noneの場合は今年）
+
+        Returns:
+            str: スプレッドシートに記載されている会社名、見つからない場合はNone
+        """
+        try:
+            if year is None:
+                year = datetime.now().year
+
+            sheet = self._get_billing_sheet_by_year(year)
+            col_a_values = sheet.col_values(1)
+            normalized_search = normalize_company_name(company_name)
+
+            if not normalized_search:
+                return None
+
+            for cell_value in col_a_values[2:]:  # Row 3以降
+                if not cell_value:
+                    continue
+                normalized_cell = normalize_company_name(str(cell_value))
+                if normalized_cell and (normalized_search in normalized_cell or normalized_cell in normalized_search):
+                    canonical = str(cell_value).strip()
+                    print(f"    正規会社名取得: '{company_name}' → '{canonical}'")
+                    return canonical
+
+            return None
+        except Exception as e:
+            print(f"    正規会社名の取得エラー: {e}")
+            return None
+
     def get_company_info(self, company_name: str) -> Optional[CompanyInfo]:
         """会社マスターから会社情報を取得
 
@@ -281,7 +319,7 @@ class GoogleSheetsClient:
             normalized_master = normalize_company_name(master_name)
 
             # 正規化した名前で部分一致検索
-            if normalized_search in normalized_master or normalized_master in normalized_search:
+            if normalized_master and (normalized_search in normalized_master or normalized_master in normalized_search):
                 # 住所とビル名を結合
                 address = str(record.get("住所", ""))
                 building_name = str(record.get("ビル名", ""))
@@ -368,7 +406,7 @@ class GoogleSheetsClient:
             company_row = None
             for i, cell_value in enumerate(col_a_values[2:], start=3):
                 normalized_cell = normalize_company_name(str(cell_value))
-                if normalized_search in normalized_cell or normalized_cell in normalized_search:
+                if normalized_cell and (normalized_search in normalized_cell or normalized_cell in normalized_search):
                     company_row = i
                     break
 
@@ -391,7 +429,7 @@ class GoogleSheetsClient:
                 prev_company_row = None
                 for i, cell_value in enumerate(prev_col_a[2:], start=3):
                     normalized_cell = normalize_company_name(str(cell_value))
-                    if normalized_search in normalized_cell or normalized_cell in normalized_search:
+                    if normalized_cell and (normalized_search in normalized_cell or normalized_cell in normalized_search):
                         prev_company_row = i
                         break
 
@@ -650,7 +688,7 @@ class GoogleSheetsClient:
                     master_name = str(row[supplier_col])
                     normalized_master = normalize_company_name(master_name)
 
-                    if normalized_search in normalized_master or normalized_master in normalized_search:
+                    if normalized_master and (normalized_search in normalized_master or normalized_master in normalized_search):
                         print(f"    → タブ「{sheet.title}」で発見: {master_name}")
                         return PaymentTerms(
                             supplier_name=master_name,

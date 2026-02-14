@@ -75,6 +75,8 @@ class RegenerateInvoiceRequest(BaseModel):
     delivery_note: DeliveryNoteResponse
     company_info: Optional[CompanyInfoResponse]
     previous_billing: PreviousBillingResponse
+    year_month: Optional[str] = None  # YYYY年M月形式（月次明細DB更新用）
+    sales_person: Optional[str] = None  # 担当者名（月次明細DB更新用）
 
 
 class RegenerateInvoiceResponse(BaseModel):
@@ -129,6 +131,23 @@ async def process_pdf(
         # バッチ内で統一された会社名を使用（LLM抽出のばらつきを防ぐ）
         effective_company_name = company_name_override.strip() if company_name_override.strip() else delivery_note.company_name
 
+        # 1.5. 会社名をスプレッドシートの正規名に統一
+        sheets_client = GoogleSheetsClient()
+        target_year = year if year else None
+        if not target_year and delivery_note.date:
+            try:
+                target_year = int(delivery_note.date.split('/')[0])
+            except (ValueError, IndexError):
+                pass
+        canonical_name = sheets_client.get_canonical_company_name(
+            effective_company_name, year=target_year
+        )
+        if canonical_name:
+            if canonical_name != effective_company_name:
+                print(f"  会社名を正規化: '{effective_company_name}' → '{canonical_name}'")
+            effective_company_name = canonical_name
+        delivery_note.company_name = effective_company_name
+
         # 2. 納品書PDFをoutputディレクトリに保存
         output_dir = Path(__file__).parent.parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
@@ -142,8 +161,7 @@ async def process_pdf(
         # 納品書PDFをコピー
         shutil.copy(tmp_path, delivery_path)
 
-        # 3. 会社情報取得
-        sheets_client = GoogleSheetsClient()
+        # 3. 会社情報取得（正規化済みの会社名で検索）
         company_info = sheets_client.get_company_info(effective_company_name)
 
         # 4. 前月の請求情報を取得（ユーザー指定の年月を優先）
@@ -311,6 +329,22 @@ async def regenerate_invoice(request: RegenerateInvoiceRequest):
     """編集後の内容で請求書PDFを再生成"""
 
     try:
+        # 会社名をスプレッドシートの正規名に統一
+        company_name = request.delivery_note.company_name
+        try:
+            sheets_client = GoogleSheetsClient()
+            target_year = None
+            if request.delivery_note.date:
+                try:
+                    target_year = int(request.delivery_note.date.split('/')[0])
+                except (ValueError, IndexError):
+                    pass
+            canonical = sheets_client.get_canonical_company_name(company_name, year=target_year)
+            if canonical:
+                company_name = canonical
+        except Exception:
+            pass  # スプレッドシート接続エラーでもPDF再生成は続行
+
         # DeliveryNoteオブジェクトを再構築
         items = [
             DeliveryItem(
@@ -326,7 +360,7 @@ async def regenerate_invoice(request: RegenerateInvoiceRequest):
 
         delivery_note = DeliveryNote(
             date=request.delivery_note.date,
-            company_name=request.delivery_note.company_name,
+            company_name=company_name,
             slip_number=request.delivery_note.slip_number,
             items=items,
             subtotal=request.delivery_note.subtotal,
@@ -376,6 +410,31 @@ async def regenerate_invoice(request: RegenerateInvoiceRequest):
             previous_billing=previous_billing,
             output_path=invoice_path,
         )
+
+        # 月次明細DBを更新（編集後のデータを反映）
+        if request.year_month:
+            try:
+                from src.database import MonthlyItemsDB
+                from src.utils import parse_year_month
+
+                # year_month が "YYYY-MM" 形式の場合は "YYYY年M月" 形式に変換
+                year_month_str = request.year_month
+                if '-' in year_month_str and '年' not in year_month_str:
+                    parts = year_month_str.split('-')
+                    year_month_str = f"{int(parts[0])}年{int(parts[1])}月"
+
+                db = MonthlyItemsDB()
+                db.update_monthly_item(
+                    company_name=delivery_note.company_name,
+                    year_month=year_month_str,
+                    delivery_note=delivery_note,
+                    sales_person=request.sales_person or "",
+                )
+                print(f"月次明細DB更新: {delivery_note.company_name} ({year_month_str})")
+            except Exception as db_error:
+                print(f"月次明細DB更新エラー（PDF生成は成功）: {db_error}")
+                import traceback
+                traceback.print_exc()
 
         # キャッシュバスティング用にタイムスタンプを追加
         timestamp = int(time.time())
@@ -503,28 +562,39 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
     指定した会社・年月の集約済みデータから月次請求書PDFを生成します。
     """
     try:
+        # 0. 会社名をスプレッドシートの正規名に統一
+        company_name = request.company_name
+        sheets_client = GoogleSheetsClient()
+        import re
+        match = re.match(r'(\d+)年(\d+)月', request.year_month)
+        if match:
+            target_year = int(match.group(1))
+        else:
+            target_year = None
+        canonical = sheets_client.get_canonical_company_name(company_name, year=target_year)
+        if canonical:
+            company_name = canonical
+
         # 1. 月次明細DBからデータ取得
         from src.database import MonthlyItemsDB
 
         db = MonthlyItemsDB()
         delivery_notes = db.get_monthly_items(
-            company_name=request.company_name,
+            company_name=company_name,
             year_month=request.year_month,
         )
 
         if not delivery_notes:
             raise HTTPException(
                 status_code=404,
-                detail=f"指定した会社・年月のデータが見つかりません: {request.company_name} ({request.year_month})"
+                detail=f"指定した会社・年月のデータが見つかりません: {company_name} ({request.year_month})"
             )
 
-        # 2. 会社情報取得
-        sheets_client = GoogleSheetsClient()
-        company_info = sheets_client.get_company_info(request.company_name)
+        # 2. 会社情報取得（正規化済みの会社名で検索）
+        company_info = sheets_client.get_company_info(company_name)
 
         # 3. 前月の請求情報を取得
         # 年月を "YYYY-MM" 形式に変換
-        import re
         match = re.match(r'(\d+)年(\d+)月', request.year_month)
         if match:
             year = match.group(1)
@@ -534,7 +604,7 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
             year_month_dash = ""
 
         previous_billing = sheets_client.get_previous_billing(
-            request.company_name,
+            company_name,
             year_month_dash,
         )
 
@@ -545,7 +615,7 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
         output_dir = Path(__file__).parent.parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
 
-        safe_company_name = request.company_name.replace("/", "_").replace("\\", "_")
+        safe_company_name = company_name.replace("/", "_").replace("\\", "_")
         # "2025年3月" → "2025_03"
         year_month_safe = request.year_month.replace("年", "_").replace("月", "")
         invoice_filename = f"monthly_invoice_{safe_company_name}_{year_month_safe}.pdf"
@@ -557,7 +627,7 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
 
         invoice_generator.generate_monthly(
             delivery_notes=delivery_notes,
-            company_name=request.company_name,
+            company_name=company_name,
             year_month=request.year_month,
             company_info=company_info,
             previous_billing=previous_billing,

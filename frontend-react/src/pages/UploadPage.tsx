@@ -134,6 +134,8 @@ export const UploadPage: React.FC = () => {
         delivery_note: data.deliveryNote,
         company_info: data.companyInfo,
         previous_billing: data.previousBilling,
+        year_month: currentYearMonth || undefined,
+        sales_person: salesPerson || undefined,
       });
 
       setCurrentDeliveryNote(data.deliveryNote);

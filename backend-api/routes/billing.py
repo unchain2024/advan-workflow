@@ -82,6 +82,19 @@ async def save_billing(request: SaveBillingRequest):
     """スプレッドシートに請求情報を保存"""
 
     try:
+        # 会社名をスプレッドシートの正規名に統一
+        sheets_client = GoogleSheetsClient()
+        company_name = request.company_name
+        target_year = None
+        if request.delivery_note.date:
+            try:
+                target_year = int(request.delivery_note.date.split('/')[0])
+            except (ValueError, IndexError):
+                pass
+        canonical = sheets_client.get_canonical_company_name(company_name, year=target_year)
+        if canonical:
+            company_name = canonical
+
         # DeliveryNoteオブジェクトを再構築
         items = [
             DeliveryItem(
@@ -97,7 +110,7 @@ async def save_billing(request: SaveBillingRequest):
 
         delivery_note = DeliveryNote(
             date=request.delivery_note.date,
-            company_name=request.delivery_note.company_name,
+            company_name=company_name,
             slip_number=request.delivery_note.slip_number,
             items=items,
             subtotal=request.delivery_note.subtotal,
@@ -114,16 +127,15 @@ async def save_billing(request: SaveBillingRequest):
         )
 
         # Google Sheetsに保存
-        sheets_client = GoogleSheetsClient()
         sheets_client.save_billing_record(
-            company_name=request.company_name,
+            company_name=company_name,
             previous_billing=previous_billing,
             delivery_note=delivery_note,
         )
 
         return {
             "success": True,
-            "message": f"**売上集計表** の {request.company_name} ({request.year_month}) を更新しました",
+            "message": f"**売上集計表** の {company_name} ({request.year_month}) を更新しました",
         }
 
     except Exception as e:
@@ -160,7 +172,7 @@ async def update_payment(request: UpdatePaymentRequest):
         company_row = None
         for i, cell_value in enumerate(col_a_values[2:], start=3):
             normalized_cell = normalize_company_name(str(cell_value))
-            if normalized_search in normalized_cell or normalized_cell in normalized_search:
+            if normalized_cell and (normalized_search in normalized_cell or normalized_cell in normalized_search):
                 company_row = i
                 break
 

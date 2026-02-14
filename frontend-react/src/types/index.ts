@@ -92,6 +92,8 @@ export interface RegenerateInvoiceRequest {
   delivery_note: DeliveryNote;
   company_info: CompanyInfo | null;
   previous_billing: PreviousBilling;
+  year_month?: string;
+  sales_person?: string;
 }
 
 export interface RegenerateInvoiceResponse {
