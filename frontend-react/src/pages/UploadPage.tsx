@@ -138,6 +138,17 @@ export const UploadPage: React.FC = () => {
         sales_person: salesPerson || undefined,
       });
 
+      // 累積値を差分更新（旧値を引いて新値を足す）
+      if (currentDeliveryNote && data.deliveryNote) {
+        const deltaSubtotal = data.deliveryNote.subtotal - currentDeliveryNote.subtotal;
+        const deltaTax = data.deliveryNote.tax - currentDeliveryNote.tax;
+        useAppStore.setState((state) => ({
+          cumulativeSubtotal: state.cumulativeSubtotal + deltaSubtotal,
+          cumulativeTax: state.cumulativeTax + deltaTax,
+          cumulativeTotal: state.cumulativeSubtotal + deltaSubtotal + state.cumulativeTax + deltaTax,
+        }));
+      }
+
       setCurrentDeliveryNote(data.deliveryNote);
       setCurrentPreviousBilling(data.previousBilling);
       setCurrentInvoicePath(result.invoice_url);
