@@ -83,7 +83,7 @@ export const UploadPage: React.FC = () => {
         const file = files[i];
         setProgressMessage(`処理中: ${file.name} (${i + 1}/${files.length})`);
 
-        const result = await processPDF(file, salesPerson, selectedYear, selectedMonth, i === 0, batchCompanyName, (prog, msg) => {
+        const result = await processPDF(file, salesPerson, selectedYear, selectedMonth, i === 0 && files.length > 1, batchCompanyName, (prog, msg) => {
           setProgress(prog);
           setProgressMessage(msg);
         });
