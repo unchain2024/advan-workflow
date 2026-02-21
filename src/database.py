@@ -310,10 +310,12 @@ class MonthlyItemsDB:
         self,
         company_name: str,
         year_month: str,
+        sales_person: str = "",
     ) -> list[DeliveryNote]:
         """月次明細DBから指定した会社・年月のデータを取得
 
         3テーブルJOINで取得し、DeliveryNote のリストとして返す。
+        sales_person が指定された場合、その担当者の納品書のみ返す。
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -325,14 +327,23 @@ class MonthlyItemsDB:
 
             invoice_id, _ = result
 
-            # delivery_notes を取得
-            cursor.execute("""
-                SELECT id, slip_number, date, sales_person,
-                       subtotal, tax, total
-                FROM delivery_notes
-                WHERE monthly_invoice_id = ?
-                ORDER BY id
-            """, (invoice_id,))
+            # delivery_notes を取得（担当者フィルター対応）
+            if sales_person:
+                cursor.execute("""
+                    SELECT id, slip_number, date, sales_person,
+                           subtotal, tax, total
+                    FROM delivery_notes
+                    WHERE monthly_invoice_id = ? AND sales_person = ?
+                    ORDER BY id
+                """, (invoice_id, sales_person))
+            else:
+                cursor.execute("""
+                    SELECT id, slip_number, date, sales_person,
+                           subtotal, tax, total
+                    FROM delivery_notes
+                    WHERE monthly_invoice_id = ?
+                    ORDER BY id
+                """, (invoice_id,))
             note_rows = cursor.fetchall()
 
             delivery_notes = []

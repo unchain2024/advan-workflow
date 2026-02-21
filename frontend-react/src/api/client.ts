@@ -146,11 +146,13 @@ export const savePurchaseRecord = async (
 
 export const generateMonthlyInvoice = async (
   companyName: string,
-  yearMonth: string
+  yearMonth: string,
+  salesPerson: string = ''
 ): Promise<GenerateMonthlyInvoiceResponse> => {
   const response = await apiClient.post<GenerateMonthlyInvoiceResponse>('/generate-monthly-invoice', {
     company_name: companyName,
     year_month: yearMonth,
+    sales_person: salesPerson,
   });
   return response.data;
 };

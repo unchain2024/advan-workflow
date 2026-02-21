@@ -47,7 +47,7 @@ export const MonthlyInvoicePage: React.FC = () => {
       // 年月を "YYYY年M月" 形式に変換
       const yearMonth = `${selectedYear}年${parseInt(selectedMonth)}月`;
 
-      const response = await generateMonthlyInvoice(companyName, yearMonth);
+      const response = await generateMonthlyInvoice(companyName, yearMonth, salesPerson);
       setResult(response);
     } catch (err: any) {
       const errorMessage =
