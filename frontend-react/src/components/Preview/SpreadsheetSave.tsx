@@ -29,7 +29,7 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 累積値があればそれを使用、なければ単一ファイルの値を使用
+  // 表示用は累積値、書き込み用は個別値
   const displaySubtotal = cumulativeSubtotal ?? deliveryNote.subtotal;
   const displayTax = cumulativeTax ?? deliveryNote.tax;
 
@@ -38,18 +38,11 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
     setError(null);
 
     try {
-      // 累積値を使ってdeliveryNoteを上書きして送信
-      const billingNote = {
-        ...deliveryNote,
-        subtotal: displaySubtotal,
-        tax: displayTax,
-        total: displaySubtotal + displayTax,
-      };
-
+      // スプレッドシートには個別の納品書の金額だけを送信（加算されるため）
       const response = await saveBilling({
         company_name: deliveryNote.company_name,
         year_month: yearMonth,
-        delivery_note: billingNote,
+        delivery_note: deliveryNote,
         previous_billing: previousBilling,
       });
 
