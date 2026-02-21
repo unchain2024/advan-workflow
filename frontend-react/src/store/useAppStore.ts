@@ -103,9 +103,6 @@ export const useAppStore = create<AppState>((set) => ({
   }),
 
   clearAll: () => set({
-    salesPerson: '',
-    selectedYear: new Date().getFullYear(),
-    selectedMonth: new Date().getMonth() + 1,
     showEditForm: false,
     spreadsheetSaved: false,
     currentDeliveryNote: null,

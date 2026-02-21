@@ -603,19 +603,26 @@ class GoogleSheetsClient:
 
         # 5. 現在の値を読み取り、加算する
         # 注意: 消滅（入金額）は手動入力、残高は数式で自動計算されるため更新しない
-        current_hassei_str = sheet.cell(company_row, hassei_col).value or ""
-        current_tax_str = sheet.cell(company_row, tax_col).value or ""
+        hassei_cell = sheet.cell(company_row, hassei_col)
+        tax_cell = sheet.cell(company_row, tax_col)
+        current_hassei_str = hassei_cell.value or ""
+        current_tax_str = tax_cell.value or ""
+
+        print(f"    [DEBUG] セル読み取り: 発生=({company_row}, {hassei_col}) raw='{hassei_cell.value}' (type={type(hassei_cell.value).__name__})")
+        print(f"    [DEBUG] セル読み取り: 消費税=({company_row}, {tax_col}) raw='{tax_cell.value}' (type={type(tax_cell.value).__name__})")
+        print(f"    [DEBUG] delivery_note.date='{delivery_note.date}', target_year_month='{target_year_month}'")
 
         # 既存の値をパース（カンマや空白を除去して数値化）
         def parse_amount(value_str: str) -> int:
             """金額文字列を数値に変換"""
             if not value_str:
                 return 0
-            # カンマ、空白、円記号などを除去
-            cleaned = str(value_str).replace(',', '').replace(' ', '').replace('¥', '').replace('円', '')
+            # カンマ、空白、円記号などを除去（全角・半角両対応）
+            cleaned = str(value_str).replace(',', '').replace('，', '').replace(' ', '').replace('¥', '').replace('￥', '').replace('円', '')
             try:
                 return int(float(cleaned))
             except ValueError:
+                print(f"    [WARNING] parse_amount失敗: '{value_str}' → cleaned='{cleaned}'")
                 return 0
 
         current_hassei = parse_amount(current_hassei_str)

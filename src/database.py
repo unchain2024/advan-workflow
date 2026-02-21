@@ -1,4 +1,4 @@
-"""SQLiteデータベース管理モジュール"""
+"""SQLiteデータベース管理モジュール（正規化3テーブル構造）"""
 import sqlite3
 import json
 from datetime import datetime
@@ -15,10 +15,6 @@ class MonthlyItemsDB:
     """月次明細データベース管理クラス"""
 
     def __init__(self, db_path: Optional[Path] = None):
-        """
-        Args:
-            db_path: データベースファイルパス（Noneの場合はDATABASE_PATHを使用）
-        """
         self.db_path = db_path or DATABASE_PATH
         self._ensure_db_directory()
         self._init_database()
@@ -32,6 +28,7 @@ class MonthlyItemsDB:
         """データベース接続のコンテキストマネージャー"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()
@@ -42,52 +39,163 @@ class MonthlyItemsDB:
             conn.close()
 
     def _init_database(self):
-        """データベーステーブルを初期化"""
+        """データベーステーブルを初期化（マイグレーション含む）"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # 新3テーブルを作成
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS monthly_items (
+                CREATE TABLE IF NOT EXISTS monthly_invoices (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     year_month TEXT NOT NULL,
                     company_name TEXT NOT NULL,
-                    sales_person TEXT NOT NULL DEFAULT '',
-                    items_json TEXT NOT NULL,
-                    subtotal INTEGER NOT NULL,
-                    tax INTEGER NOT NULL,
-                    total INTEGER NOT NULL,
-                    slip_numbers TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(year_month, company_name)
                 )
             """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS delivery_notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monthly_invoice_id INTEGER NOT NULL,
+                    slip_number TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    sales_person TEXT NOT NULL DEFAULT '',
+                    subtotal INTEGER NOT NULL,
+                    tax INTEGER NOT NULL,
+                    total INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (monthly_invoice_id)
+                        REFERENCES monthly_invoices(id) ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS delivery_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    delivery_note_id INTEGER NOT NULL,
+                    product_code TEXT NOT NULL DEFAULT '',
+                    product_name TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    unit_price INTEGER NOT NULL,
+                    amount INTEGER NOT NULL,
+                    FOREIGN KEY (delivery_note_id)
+                        REFERENCES delivery_notes(id) ON DELETE CASCADE
+                )
+            """)
+
             # インデックス作成
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_year_month_company
-                ON monthly_items(year_month, company_name)
+                CREATE INDEX IF NOT EXISTS idx_monthly_invoices_ym_company
+                ON monthly_invoices(year_month, company_name)
             """)
-            # 既存DBのマイグレーション: sales_personカラムを追加
-            cursor.execute("PRAGMA table_info(monthly_items)")
-            columns = [col[1] for col in cursor.fetchall()]
-            if "sales_person" not in columns:
-                cursor.execute(
-                    "ALTER TABLE monthly_items ADD COLUMN sales_person TEXT NOT NULL DEFAULT ''"
-                )
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_delivery_notes_invoice_id
+                ON delivery_notes(monthly_invoice_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_delivery_items_note_id
+                ON delivery_items(delivery_note_id)
+            """)
 
-    def _find_record_by_normalized_name(self, cursor, year_month: str, company_name: str):
-        """正規化した会社名で既存レコードを検索
+            # 旧テーブルからマイグレーション
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='monthly_items'
+            """)
+            if cursor.fetchone():
+                self._migrate_from_old_table(cursor)
 
-        まず完全一致を試み、見つからなければ正規化名で部分一致検索する。
+    def _migrate_from_old_table(self, cursor):
+        """旧 monthly_items テーブルからデータを移行"""
+        print("旧テーブルからのマイグレーションを開始...")
+        cursor.execute("SELECT * FROM monthly_items")
+        old_rows = cursor.fetchall()
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+        for old_row in old_rows:
+            year_month = old_row["year_month"]
+            company_name = old_row["company_name"]
+            sales_person = old_row["sales_person"] or ""
+
+            # monthly_invoices に挿入
+            cursor.execute("""
+                INSERT OR IGNORE INTO monthly_invoices
+                (year_month, company_name, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+            """, (year_month, company_name, old_row["created_at"], old_row["updated_at"]))
+            cursor.execute("""
+                SELECT id FROM monthly_invoices
+                WHERE year_month = ? AND company_name = ?
+            """, (year_month, company_name))
+            invoice_id = cursor.fetchone()["id"]
+
+            # items_json をパース
+            try:
+                items_list = json.loads(old_row["items_json"])
+            except (json.JSONDecodeError, TypeError):
+                items_list = []
+
+            for item_data in items_list:
+                slip_number = item_data.get("slip_number", "")
+                date = item_data.get("date", "")
+                items = item_data.get("items", [])
+
+                # 小計・消費税・合計を計算
+                subtotal = sum(it.get("amount", 0) for it in items)
+                tax = int(subtotal * 0.1)
+                total = subtotal + tax
+
+                # delivery_notes に挿入
+                cursor.execute("""
+                    INSERT INTO delivery_notes
+                    (monthly_invoice_id, slip_number, date, sales_person,
+                     subtotal, tax, total, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    invoice_id, slip_number, date, sales_person,
+                    subtotal, tax, total, current_time, current_time,
+                ))
+                note_id = cursor.lastrowid
+
+                # delivery_items に挿入
+                for item in items:
+                    cursor.execute("""
+                        INSERT INTO delivery_items
+                        (delivery_note_id, product_code, product_name,
+                         quantity, unit_price, amount)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        note_id,
+                        item.get("product_code", ""),
+                        item.get("product_name", ""),
+                        item.get("quantity", 0),
+                        item.get("unit_price", 0),
+                        item.get("amount", 0),
+                    ))
+
+        # 旧テーブルを削除
+        cursor.execute("DROP TABLE monthly_items")
+        print(f"マイグレーション完了: {len(old_rows)}件のレコードを移行")
+
+    def _find_invoice_id(
+        self, cursor, year_month: str, company_name: str,
+    ) -> Optional[tuple]:
+        """正規化した会社名で monthly_invoices レコードを検索
+
+        Returns:
+            (id, company_name) tuple、見つからない場合は None
         """
         # まず完全一致を試みる
         cursor.execute("""
-            SELECT id, items_json, subtotal, tax, total, slip_numbers, company_name
-            FROM monthly_items
+            SELECT id, company_name FROM monthly_invoices
             WHERE year_month = ? AND company_name = ?
         """, (year_month, company_name))
         row = cursor.fetchone()
         if row:
-            return row
+            return (row["id"], row["company_name"])
 
         # 完全一致がなければ、正規化名で検索
         normalized_search = normalize_company_name(company_name)
@@ -95,17 +203,19 @@ class MonthlyItemsDB:
             return None
 
         cursor.execute("""
-            SELECT id, items_json, subtotal, tax, total, slip_numbers, company_name
-            FROM monthly_items
+            SELECT id, company_name FROM monthly_invoices
             WHERE year_month = ?
         """, (year_month,))
         rows = cursor.fetchall()
 
         for row in rows:
             normalized_db = normalize_company_name(row["company_name"])
-            if normalized_db and (normalized_search in normalized_db or normalized_db in normalized_search):
+            if normalized_db and (
+                normalized_search in normalized_db
+                or normalized_db in normalized_search
+            ):
                 print(f"    正規化マッチ: '{company_name}' → DB内 '{row['company_name']}'")
-                return row
+                return (row["id"], row["company_name"])
 
         return None
 
@@ -118,139 +228,82 @@ class MonthlyItemsDB:
     ):
         """月次明細DBに納品書データを保存（月+会社キーで集約）
 
-        処理:
-        1. 年月+会社名をキーとして既存レコードを検索
-        2. 既存レコードがある場合:
-           - 明細JSONに新しい納品書データを追加
-           - 小計・消費税・合計を累積加算
-           - 納品書リストに伝票番号を追加
-        3. 既存レコードがない場合:
-           - 新規レコードを作成
-
-        Args:
-            company_name: 会社名
-            year_month: 年月（YYYY年M月形式）
-            delivery_note: 納品書データ
+        monthly_invoices をUPSERT → delivery_notes にINSERT → delivery_items にINSERT
         """
-        # 会社名を正規化
-        normalized_company = normalize_company_name(company_name)
-
-        # 担当者名のホワイトスペースを除去（日本語名はスペースなし）
         sales_person_clean = "".join(sales_person.split())
-
-        # 新しい明細データを作成
-        new_item = {
-            "date": delivery_note.date,
-            "slip_number": delivery_note.slip_number,
-            "items": [
-                {
-                    "product_code": item.product_code,
-                    "product_name": item.product_name,
-                    "quantity": item.quantity,
-                    "unit_price": item.unit_price,
-                    "amount": item.amount,
-                }
-                for item in delivery_note.items
-            ],
-        }
-
         current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # 既存レコードを検索（正規化した会社名でマッチング）
-            existing_row = self._find_record_by_normalized_name(
-                cursor, year_month, company_name
-            )
+            # monthly_invoices を検索または作成
+            result = self._find_invoice_id(cursor, year_month, company_name)
 
-            if existing_row:
-                # 既存レコードを更新
-                existing_json = existing_row["items_json"]
-                existing_subtotal = existing_row["subtotal"]
-                existing_tax = existing_row["tax"]
-                existing_total = existing_row["total"]
-                existing_slips = existing_row["slip_numbers"]
-
-                # 明細JSONに追加
-                try:
-                    items_list = json.loads(existing_json)
-                except json.JSONDecodeError:
-                    items_list = []
-
-                items_list.append(new_item)
-                updated_json = json.dumps(items_list, ensure_ascii=False)
-
-                # 納品書リストに追加
-                slip_list = [s.strip() for s in existing_slips.split(",") if s.strip()]
-                if delivery_note.slip_number and delivery_note.slip_number not in slip_list:
-                    slip_list.append(delivery_note.slip_number)
-                updated_slips = ", ".join(slip_list)
-
-                # 更新
+            if result:
+                invoice_id, _ = result
                 cursor.execute("""
-                    UPDATE monthly_items
-                    SET items_json = ?,
-                        subtotal = ?,
-                        tax = ?,
-                        total = ?,
-                        slip_numbers = ?,
-                        sales_person = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                """, (
-                    updated_json,
-                    existing_subtotal + delivery_note.subtotal,
-                    existing_tax + delivery_note.tax,
-                    existing_total + delivery_note.total,
-                    updated_slips,
-                    sales_person_clean,
-                    current_time,
-                    existing_row["id"],
-                ))
-
-                print(f"    月次明細DB更新: {company_name} ({year_month}) - ID {existing_row['id']}")
+                    UPDATE monthly_invoices SET updated_at = ? WHERE id = ?
+                """, (current_time, invoice_id))
+                print(f"    月次明細DB更新: {company_name} ({year_month}) - ID {invoice_id}")
             else:
-                # 新規レコード作成
-                items_json = json.dumps([new_item], ensure_ascii=False)
-
                 cursor.execute("""
-                    INSERT INTO monthly_items
-                    (year_month, company_name, sales_person, items_json, subtotal, tax, total, slip_numbers, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    year_month,
-                    company_name,
-                    sales_person_clean,
-                    items_json,
-                    delivery_note.subtotal,
-                    delivery_note.tax,
-                    delivery_note.total,
-                    delivery_note.slip_number or "",
-                    current_time,
-                    current_time,
-                ))
-
+                    INSERT INTO monthly_invoices
+                    (year_month, company_name, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, (year_month, company_name, current_time, current_time))
+                invoice_id = cursor.lastrowid
                 print(f"    月次明細DB新規作成: {company_name} ({year_month})")
+
+            # delivery_notes に挿入
+            cursor.execute("""
+                INSERT INTO delivery_notes
+                (monthly_invoice_id, slip_number, date, sales_person,
+                 subtotal, tax, total, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                invoice_id,
+                delivery_note.slip_number or "",
+                delivery_note.date or "",
+                sales_person_clean,
+                delivery_note.subtotal,
+                delivery_note.tax,
+                delivery_note.total,
+                current_time,
+                current_time,
+            ))
+            note_id = cursor.lastrowid
+
+            # delivery_items に挿入
+            for item in delivery_note.items:
+                cursor.execute("""
+                    INSERT INTO delivery_items
+                    (delivery_note_id, product_code, product_name,
+                     quantity, unit_price, amount)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    note_id,
+                    item.product_code or "",
+                    item.product_name,
+                    item.quantity,
+                    item.unit_price,
+                    item.amount,
+                ))
 
     def delete_monthly_items(
         self,
         company_name: str,
         year_month: str,
     ):
-        """指定した会社・年月の月次明細レコードを削除
-
-        Args:
-            company_name: 会社名
-            year_month: 年月（YYYY年M月形式）
-        """
+        """指定した会社・年月の月次明細レコードを削除（CASCADE削除）"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM monthly_items
-                WHERE year_month = ? AND company_name = ?
-            """, (year_month, company_name))
-            if cursor.rowcount > 0:
+            result = self._find_invoice_id(cursor, year_month, company_name)
+            if result:
+                invoice_id, _ = result
+                # CASCADE で delivery_notes, delivery_items も自動削除
+                cursor.execute(
+                    "DELETE FROM monthly_invoices WHERE id = ?", (invoice_id,)
+                )
                 print(f"    月次明細DB削除: {company_name} ({year_month})")
 
     def get_monthly_items(
@@ -260,103 +313,65 @@ class MonthlyItemsDB:
     ) -> list[DeliveryNote]:
         """月次明細DBから指定した会社・年月のデータを取得
 
-        Args:
-            company_name: 会社名
-            year_month: 年月（YYYY年M月形式）
-
-        Returns:
-            list[DeliveryNote]: 納品書データのリスト（見つからない場合は空リスト）
+        3テーブルJOINで取得し、DeliveryNote のリストとして返す。
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # 正規化した会社名でレコードを検索
-            row = self._find_record_by_normalized_name(
-                cursor, year_month, company_name
-            )
+            result = self._find_invoice_id(cursor, year_month, company_name)
+            if not result:
+                print(f"    月次明細DB: レコードが見つかりません ({company_name}, {year_month})")
+                return []
 
-            if row:
-                # 明細JSONをパース
-                try:
-                    items_json = row["items_json"]
-                    items_list = json.loads(items_json)
-                    delivery_notes = []
+            invoice_id, _ = result
 
-                    for item_data in items_list:
-                        # DeliveryNoteオブジェクトを作成
-                        slip_number = item_data["slip_number"]
-                        items = [
-                            DeliveryItem(
-                                slip_number=slip_number,
-                                product_code=item["product_code"],
-                                product_name=item["product_name"],
-                                quantity=item["quantity"],
-                                unit_price=item["unit_price"],
-                                amount=item["amount"],
-                            )
-                            for item in item_data.get("items", [])
-                        ]
+            # delivery_notes を取得
+            cursor.execute("""
+                SELECT id, slip_number, date, sales_person,
+                       subtotal, tax, total
+                FROM delivery_notes
+                WHERE monthly_invoice_id = ?
+                ORDER BY id
+            """, (invoice_id,))
+            note_rows = cursor.fetchall()
 
-                        # 小計・消費税・合計を計算
-                        subtotal = sum(item.amount for item in items)
-                        tax = int(subtotal * 0.1)
-                        total = subtotal + tax
+            delivery_notes = []
+            for note_row in note_rows:
+                # delivery_items を取得
+                cursor.execute("""
+                    SELECT product_code, product_name, quantity,
+                           unit_price, amount
+                    FROM delivery_items
+                    WHERE delivery_note_id = ?
+                    ORDER BY id
+                """, (note_row["id"],))
+                item_rows = cursor.fetchall()
 
-                        delivery_note = DeliveryNote(
-                            slip_number=item_data["slip_number"],
-                            date=item_data["date"],
-                            company_name=company_name,
-                            items=items,
-                            subtotal=subtotal,
-                            tax=tax,
-                            total=total,
-                        )
-                        delivery_notes.append(delivery_note)
+                items = [
+                    DeliveryItem(
+                        slip_number=note_row["slip_number"],
+                        product_code=row["product_code"],
+                        product_name=row["product_name"],
+                        quantity=row["quantity"],
+                        unit_price=row["unit_price"],
+                        amount=row["amount"],
+                    )
+                    for row in item_rows
+                ]
 
-                    print(f"    月次明細DB取得: {company_name} ({year_month}) - {len(delivery_notes)}件の納品書")
-                    return delivery_notes
+                dn = DeliveryNote(
+                    slip_number=note_row["slip_number"],
+                    date=note_row["date"],
+                    company_name=company_name,
+                    items=items,
+                    subtotal=note_row["subtotal"],
+                    tax=note_row["tax"],
+                    total=note_row["total"],
+                )
+                delivery_notes.append(dn)
 
-                except (json.JSONDecodeError, KeyError) as e:
-                    print(f"    エラー: 明細JSONのパースに失敗: {e}")
-                    return []
-
-            print(f"    月次明細DB: レコードが見つかりません ({company_name}, {year_month})")
-            return []
-
-    def get_monthly_summary(
-        self,
-        company_name: str,
-        year_month: str,
-    ) -> Optional[dict]:
-        """月次集計情報を取得
-
-        Args:
-            company_name: 会社名
-            year_month: 年月（YYYY年M月形式）
-
-        Returns:
-            dict: 集計情報（subtotal, tax, total, slip_count, slip_numbers）
-                  見つからない場合はNone
-        """
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-
-            # 正規化した会社名でレコードを検索
-            row = self._find_record_by_normalized_name(
-                cursor, year_month, company_name
-            )
-
-            if row:
-                slip_numbers = [s.strip() for s in row["slip_numbers"].split(",") if s.strip()]
-                return {
-                    "subtotal": row["subtotal"],
-                    "tax": row["tax"],
-                    "total": row["total"],
-                    "slip_count": len(slip_numbers),
-                    "slip_numbers": slip_numbers,
-                }
-
-            return None
+            print(f"    月次明細DB取得: {company_name} ({year_month}) - {len(delivery_notes)}件の納品書")
+            return delivery_notes
 
     def update_monthly_item(
         self,
@@ -365,136 +380,128 @@ class MonthlyItemsDB:
         delivery_note: DeliveryNote,
         sales_person: str = "",
     ):
-        """月次明細DBの特定の納品書データを更新（編集後のデータで置換）
+        """月次明細DBの特定の納品書データを更新
 
-        slip_numberで既存の納品書エントリを特定し、新しいデータで置換する。
-        小計・消費税・合計も再計算する。
-
-        Args:
-            company_name: 会社名
-            year_month: 年月（YYYY年M月形式）
-            delivery_note: 更新後の納品書データ
-            sales_person: 担当者名
+        slip_numberでdelivery_notesを特定し、UPDATE + delivery_items再作成。
+        差分計算が不要（単純なUPDATE/DELETE+INSERT）。
         """
         sales_person_clean = "".join(sales_person.split())
         current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
 
-        # 更新用の明細データ
-        updated_item = {
-            "date": delivery_note.date,
-            "slip_number": delivery_note.slip_number,
-            "items": [
-                {
-                    "product_code": item.product_code,
-                    "product_name": item.product_name,
-                    "quantity": item.quantity,
-                    "unit_price": item.unit_price,
-                    "amount": item.amount,
-                }
-                for item in delivery_note.items
-            ],
-        }
-
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # 正規化した会社名で既存レコードを検索
-            existing_row = self._find_record_by_normalized_name(
-                cursor, year_month, company_name
-            )
-
-            if not existing_row:
+            result = self._find_invoice_id(cursor, year_month, company_name)
+            if not result:
                 print(f"    月次明細DB: 更新対象が見つかりません ({company_name}, {year_month})")
                 # 見つからない場合は新規保存
-                self.save_monthly_items(company_name, year_month, delivery_note, sales_person)
+                self.save_monthly_items(
+                    company_name, year_month, delivery_note, sales_person
+                )
                 return
 
-            # 既存の明細JSONをパース
-            try:
-                items_list = json.loads(existing_row["items_json"])
-            except json.JSONDecodeError:
-                items_list = []
+            invoice_id, _ = result
 
-            # slip_numberで既存エントリを探して置換
-            found = False
-            old_subtotal = 0
-            old_tax = 0
-            for i, item_data in enumerate(items_list):
-                if item_data.get("slip_number") == delivery_note.slip_number:
-                    # 古いデータの小計を計算（差分用）
-                    old_amounts = sum(
-                        it.get("amount", 0) for it in item_data.get("items", [])
-                    )
-                    old_subtotal = old_amounts
-                    old_tax = int(old_amounts * 0.1)
-                    # 新しいデータで置換
-                    items_list[i] = updated_item
-                    found = True
-                    print(f"    月次明細DB: slip_number '{delivery_note.slip_number}' を更新")
-                    break
-
-            if not found:
-                print(f"    月次明細DB: slip_number '{delivery_note.slip_number}' が見つかりません、追加します")
-                items_list.append(updated_item)
-                old_subtotal = 0
-                old_tax = 0
-
-            updated_json = json.dumps(items_list, ensure_ascii=False)
-
-            # 小計・消費税・合計を再計算（差分を反映）
-            new_db_subtotal = existing_row["subtotal"] - old_subtotal + delivery_note.subtotal
-            new_db_tax = existing_row["tax"] - old_tax + delivery_note.tax
-            new_db_total = new_db_subtotal + new_db_tax
-
+            # slip_number で delivery_notes を検索
             cursor.execute("""
-                UPDATE monthly_items
-                SET items_json = ?,
-                    subtotal = ?,
-                    tax = ?,
-                    total = ?,
-                    sales_person = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """, (
-                updated_json,
-                new_db_subtotal,
-                new_db_tax,
-                new_db_total,
-                sales_person_clean,
-                current_time,
-                existing_row["id"],
-            ))
+                SELECT id, sales_person FROM delivery_notes
+                WHERE monthly_invoice_id = ? AND slip_number = ?
+            """, (invoice_id, delivery_note.slip_number))
+            note_row = cursor.fetchone()
 
-            print(f"    月次明細DB更新完了: {company_name} ({year_month}) - 小計: {old_subtotal} → {delivery_note.subtotal}")
+            if note_row:
+                note_id = note_row["id"]
+                # sales_person が空の場合は既存値を保持（上書き防止）
+                effective_sales_person = (
+                    sales_person_clean if sales_person_clean
+                    else note_row["sales_person"]
+                )
+                # delivery_notes を更新
+                cursor.execute("""
+                    UPDATE delivery_notes
+                    SET date = ?, sales_person = ?,
+                        subtotal = ?, tax = ?, total = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (
+                    delivery_note.date or "",
+                    effective_sales_person,
+                    delivery_note.subtotal,
+                    delivery_note.tax,
+                    delivery_note.total,
+                    current_time,
+                    note_id,
+                ))
+
+                # delivery_items を全削除して再挿入
+                cursor.execute(
+                    "DELETE FROM delivery_items WHERE delivery_note_id = ?",
+                    (note_id,),
+                )
+                print(f"    月次明細DB: slip_number '{delivery_note.slip_number}' を更新")
+            else:
+                # slip_number が見つからない場合は新規追加
+                cursor.execute("""
+                    INSERT INTO delivery_notes
+                    (monthly_invoice_id, slip_number, date, sales_person,
+                     subtotal, tax, total, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    invoice_id,
+                    delivery_note.slip_number or "",
+                    delivery_note.date or "",
+                    sales_person_clean,
+                    delivery_note.subtotal,
+                    delivery_note.tax,
+                    delivery_note.total,
+                    current_time,
+                    current_time,
+                ))
+                note_id = cursor.lastrowid
+                print(f"    月次明細DB: slip_number '{delivery_note.slip_number}' が見つかりません、追加しました")
+
+            # delivery_items を挿入
+            for item in delivery_note.items:
+                cursor.execute("""
+                    INSERT INTO delivery_items
+                    (delivery_note_id, product_code, product_name,
+                     quantity, unit_price, amount)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    note_id,
+                    item.product_code or "",
+                    item.product_name,
+                    item.quantity,
+                    item.unit_price,
+                    item.amount,
+                ))
+
+            # monthly_invoices の updated_at を更新
+            cursor.execute("""
+                UPDATE monthly_invoices SET updated_at = ? WHERE id = ?
+            """, (current_time, invoice_id))
+
+            print(f"    月次明細DB更新完了: {company_name} ({year_month})")
 
     def get_distinct_companies(self) -> list[str]:
-        """月次明細DBに保存されているすべての会社名を取得
-
-        Returns:
-            list[str]: ユニークな会社名のリスト（ソート済み）
-        """
+        """月次明細DBに保存されているすべての会社名を取得"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT DISTINCT company_name
-                FROM monthly_items
+                FROM monthly_invoices
                 ORDER BY company_name
             """)
             return [row["company_name"] for row in cursor.fetchall()]
 
     def get_distinct_sales_persons(self) -> list[str]:
-        """月次明細DBに保存されているすべての担当者名を取得
-
-        Returns:
-            list[str]: ユニークな担当者名のリスト（ソート済み、空文字を除く）
-        """
+        """月次明細DBに保存されているすべての担当者名を取得"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT DISTINCT sales_person
-                FROM monthly_items
+                FROM delivery_notes
                 WHERE sales_person != ''
                 ORDER BY sales_person
             """)
             return [row["sales_person"] for row in cursor.fetchall()]
-

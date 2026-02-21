@@ -164,23 +164,22 @@ async def process_pdf(
         # 3. 会社情報取得（正規化済みの会社名で検索）
         company_info = sheets_client.get_company_info(effective_company_name)
 
-        # 4. 前月の請求情報を取得（ユーザー指定の年月を優先）
-        if year and month:
-            year_month = f"{year}-{int(month):02d}"
-        else:
-            year_month = extract_year_month(delivery_note.date)
-        previous_billing = sheets_client.get_previous_billing(
-            effective_company_name, year_month
-        )
-
-        # 5. 月次明細DBに保存（請求書生成前に保存して累積データを取得する）
+        # 4. 前月の請求情報を取得（納品書の日付ベースで年月を決定）
         from src.database import MonthlyItemsDB
         from src.utils import parse_year_month
 
-        if year and month:
+        # 納品書の日付から年月を決定（スプレッドシートと一致させる）
+        year_month_str = parse_year_month(delivery_note.date)
+        if not year_month_str and year and month:
             year_month_str = f"{year}年{month}月"
-        else:
-            year_month_str = parse_year_month(delivery_note.date)
+
+        year_month = extract_year_month(delivery_note.date)
+        if not year_month and year and month:
+            year_month = f"{year}-{int(month):02d}"
+
+        previous_billing = sheets_client.get_previous_billing(
+            effective_company_name, year_month
+        )
 
         db = MonthlyItemsDB()
         if year_month_str:
