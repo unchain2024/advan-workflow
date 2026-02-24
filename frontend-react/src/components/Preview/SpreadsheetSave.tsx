@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Button } from '../Common/Button';
 import { Message } from '../Common/Message';
 import { MetricCard } from '../Common/MetricCard';
-import { saveBilling } from '../../api/client';
+import { saveBilling, checkDiscrepancy } from '../../api/client';
+import { useAppStore } from '../../store/useAppStore';
 import type { DeliveryNote, PreviousBilling } from '../../types';
 
 interface SpreadsheetSaveProps {
+  allDeliveryNotes: DeliveryNote[];
   deliveryNote: DeliveryNote;
   previousBilling: PreviousBilling;
   yearMonth: string;
@@ -14,9 +16,11 @@ interface SpreadsheetSaveProps {
   invoicePath: string;
   cumulativeSubtotal?: number;
   cumulativeTax?: number;
+  salesPerson: string;
 }
 
 export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
+  allDeliveryNotes,
   deliveryNote,
   previousBilling,
   yearMonth,
@@ -25,29 +29,51 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
   invoicePath,
   cumulativeSubtotal,
   cumulativeTax,
+  salesPerson,
 }) => {
+  const setDiscrepancies = useAppStore((s) => s.setDiscrepancies);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(crypto.randomUUID());
 
   // 表示用は累積値、書き込み用は個別値
   const displaySubtotal = cumulativeSubtotal ?? deliveryNote.subtotal;
   const displayTax = cumulativeTax ?? deliveryNote.tax;
+
+  // シート既存値
+  const existingSales = previousBilling.sales_amount ?? 0;
+  const existingTax = previousBilling.tax_amount ?? 0;
+
+  // 書き込み後の合計
+  const afterSales = existingSales + displaySubtotal;
+  const afterTax = existingTax + displayTax;
 
   const handleSave = async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      // スプレッドシートには個別の納品書の金額だけを送信（加算されるため）
+      // 全納品書を一括でシート + DB に保存（冪等性トークン付き）
+      const notesToSend = allDeliveryNotes.length > 0 ? allDeliveryNotes : [deliveryNote];
       const response = await saveBilling({
         company_name: deliveryNote.company_name,
         year_month: yearMonth,
-        delivery_note: deliveryNote,
+        delivery_notes: notesToSend,
         previous_billing: previousBilling,
+        sales_person: salesPerson,
+        request_id: requestIdRef.current,
       });
 
       alert(response.message);
       onSaveComplete();
+
+      // スプレッドシート書き込み後に乖離チェックを再実行
+      try {
+        const discResult = await checkDiscrepancy();
+        setDiscrepancies(discResult.discrepancies);
+      } catch (discErr) {
+        console.error('乖離チェックエラー:', discErr);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '書き込みエラーが発生しました');
     } finally {
@@ -80,16 +106,56 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
             内容を確認後、スプレッドシートに書き込んでください。
           </Message>
 
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <MetricCard
-              label="発生（売上）"
-              value={`¥${displaySubtotal.toLocaleString()}`}
-            />
-            <MetricCard
-              label="消費税"
-              value={`¥${displayTax.toLocaleString()}`}
-            />
-          </div>
+          {/* 既存値がある場合は内訳を表示 */}
+          {existingSales > 0 || existingTax > 0 ? (
+            <div className="mb-6 space-y-3">
+              <div className="grid grid-cols-2 gap-4">
+                <MetricCard
+                  label="シート既存（発生）"
+                  value={`¥${existingSales.toLocaleString()}`}
+                />
+                <MetricCard
+                  label="シート既存（消費税）"
+                  value={`¥${existingTax.toLocaleString()}`}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <MetricCard
+                  label="＋ 今回追加（発生）"
+                  value={`¥${displaySubtotal.toLocaleString()}`}
+                />
+                <MetricCard
+                  label="＋ 今回追加（消費税）"
+                  value={`¥${displayTax.toLocaleString()}`}
+                />
+              </div>
+              <div className="border-t border-gray-300 pt-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <MetricCard
+                    label="書き込み後（発生）"
+                    value={`¥${afterSales.toLocaleString()}`}
+                    highlight
+                  />
+                  <MetricCard
+                    label="書き込み後（消費税）"
+                    value={`¥${afterTax.toLocaleString()}`}
+                    highlight
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <MetricCard
+                label="発生（売上）"
+                value={`¥${displaySubtotal.toLocaleString()}`}
+              />
+              <MetricCard
+                label="消費税"
+                value={`¥${displayTax.toLocaleString()}`}
+              />
+            </div>
+          )}
 
           {error && (
             <Message type="error" className="mb-4">

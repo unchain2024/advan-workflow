@@ -1,13 +1,20 @@
 import { create } from 'zustand';
-import type { DeliveryNote, DeliveryItem, CompanyInfo, PreviousBilling } from '../types';
+import type { DeliveryNote, DeliveryItem, CompanyInfo, PreviousBilling, Discrepancy } from '../types';
 
 interface AppState {
+  // 乖離チェック状態
+  discrepancies: Discrepancy[];
+  discrepancyLoading: boolean;
+  setDiscrepancies: (d: Discrepancy[]) => void;
+  setDiscrepancyLoading: (l: boolean) => void;
+
   // セッション状態
   salesPerson: string;
   selectedYear: number;
   selectedMonth: number;
   showEditForm: boolean;
   spreadsheetSaved: boolean;
+  allDeliveryNotes: DeliveryNote[];
   currentDeliveryNote: DeliveryNote | null;
   currentCompanyInfo: CompanyInfo | null;
   currentPreviousBilling: PreviousBilling | null;
@@ -15,11 +22,6 @@ interface AppState {
   currentYearMonth: string | null;
   currentDeliveryPdf: string | null;
   deliveryPdfUrls: string[];
-  cumulativeSubtotal: number;
-  cumulativeTax: number;
-  cumulativeTotal: number;
-  cumulativeItemsCount: number;
-  cumulativeItems: DeliveryItem[];
 
   // アクション
   setSalesPerson: (name: string) => void;
@@ -27,6 +29,7 @@ interface AppState {
   setSelectedMonth: (month: number) => void;
   setShowEditForm: (show: boolean) => void;
   setSpreadsheetSaved: (saved: boolean) => void;
+  addDeliveryNote: (note: DeliveryNote) => void;
   setCurrentDeliveryNote: (note: DeliveryNote | null) => void;
   setCurrentCompanyInfo: (info: CompanyInfo | null) => void;
   setCurrentPreviousBilling: (billing: PreviousBilling | null) => void;
@@ -34,7 +37,6 @@ interface AppState {
   setCurrentYearMonth: (yearMonth: string | null) => void;
   setCurrentDeliveryPdf: (path: string | null) => void;
   addDeliveryPdfUrl: (url: string) => void;
-  addCumulativeItems: (items: DeliveryItem[]) => void;
 
   // 処理結果をまとめてセット
   setProcessResult: (result: {
@@ -43,10 +45,6 @@ interface AppState {
     previousBilling: PreviousBilling;
     invoicePath: string;
     yearMonth: string;
-    cumulativeSubtotal: number;
-    cumulativeTax: number;
-    cumulativeTotal: number;
-    cumulativeItemsCount: number;
   }) => void;
 
   // すべてクリア
@@ -54,12 +52,19 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
+  // 乖離チェック初期状態
+  discrepancies: [],
+  discrepancyLoading: false,
+  setDiscrepancies: (d) => set({ discrepancies: d }),
+  setDiscrepancyLoading: (l) => set({ discrepancyLoading: l }),
+
   // 初期状態
   salesPerson: '',
   selectedYear: new Date().getFullYear(),
   selectedMonth: new Date().getMonth() + 1,
   showEditForm: false,
   spreadsheetSaved: false,
+  allDeliveryNotes: [],
   currentDeliveryNote: null,
   currentCompanyInfo: null,
   currentPreviousBilling: null,
@@ -67,11 +72,6 @@ export const useAppStore = create<AppState>((set) => ({
   currentYearMonth: null,
   currentDeliveryPdf: null,
   deliveryPdfUrls: [],
-  cumulativeSubtotal: 0,
-  cumulativeTax: 0,
-  cumulativeTotal: 0,
-  cumulativeItemsCount: 0,
-  cumulativeItems: [],
 
   // アクション
   setSalesPerson: (name) => set({ salesPerson: name }),
@@ -79,6 +79,7 @@ export const useAppStore = create<AppState>((set) => ({
   setSelectedMonth: (month) => set({ selectedMonth: month }),
   setShowEditForm: (show) => set({ showEditForm: show }),
   setSpreadsheetSaved: (saved) => set({ spreadsheetSaved: saved }),
+  addDeliveryNote: (note) => set((state) => ({ allDeliveryNotes: [...state.allDeliveryNotes, note] })),
   setCurrentDeliveryNote: (note) => set({ currentDeliveryNote: note }),
   setCurrentCompanyInfo: (info) => set({ currentCompanyInfo: info }),
   setCurrentPreviousBilling: (billing) => set({ currentPreviousBilling: billing }),
@@ -86,7 +87,6 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentYearMonth: (yearMonth) => set({ currentYearMonth: yearMonth }),
   setCurrentDeliveryPdf: (path) => set({ currentDeliveryPdf: path }),
   addDeliveryPdfUrl: (url) => set((state) => ({ deliveryPdfUrls: [...state.deliveryPdfUrls, url] })),
-  addCumulativeItems: (items) => set((state) => ({ cumulativeItems: [...state.cumulativeItems, ...items] })),
 
   setProcessResult: (result) => set({
     currentDeliveryNote: result.deliveryNote,
@@ -94,10 +94,6 @@ export const useAppStore = create<AppState>((set) => ({
     currentPreviousBilling: result.previousBilling,
     currentInvoicePath: result.invoicePath,
     currentYearMonth: result.yearMonth,
-    cumulativeSubtotal: result.cumulativeSubtotal,
-    cumulativeTax: result.cumulativeTax,
-    cumulativeTotal: result.cumulativeTotal,
-    cumulativeItemsCount: result.cumulativeItemsCount,
     spreadsheetSaved: false,
     showEditForm: false,
   }),
@@ -105,6 +101,7 @@ export const useAppStore = create<AppState>((set) => ({
   clearAll: () => set({
     showEditForm: false,
     spreadsheetSaved: false,
+    allDeliveryNotes: [],
     currentDeliveryNote: null,
     currentCompanyInfo: null,
     currentPreviousBilling: null,
@@ -112,10 +109,22 @@ export const useAppStore = create<AppState>((set) => ({
     currentYearMonth: null,
     currentDeliveryPdf: null,
     deliveryPdfUrls: [],
-    cumulativeSubtotal: 0,
-    cumulativeTax: 0,
-    cumulativeTotal: 0,
-    cumulativeItemsCount: 0,
-    cumulativeItems: [],
   }),
 }));
+
+// --- 導出セレクタ（allDeliveryNotes から算出） ---
+
+export const selectCumulativeSubtotal = (state: AppState) =>
+  state.allDeliveryNotes.reduce((acc, n) => acc + n.subtotal, 0);
+
+export const selectCumulativeTax = (state: AppState) =>
+  state.allDeliveryNotes.reduce((acc, n) => acc + n.tax, 0);
+
+export const selectCumulativeTotal = (state: AppState) =>
+  state.allDeliveryNotes.reduce((acc, n) => acc + n.subtotal + n.tax, 0);
+
+export const selectCumulativeItemsCount = (state: AppState) =>
+  state.allDeliveryNotes.reduce((acc, n) => acc + n.items.length, 0);
+
+export const selectCumulativeItems = (state: AppState): DeliveryItem[] =>
+  state.allDeliveryNotes.flatMap((n) => n.items);

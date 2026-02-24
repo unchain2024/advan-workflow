@@ -10,6 +10,7 @@ export const Sidebar: React.FC = () => {
     { path: '/purchase', label: '📥 仕入れ' },
     { path: '/payment', label: '💰 入金額入力' },
     { path: '/settings', label: '⚙️ 自社情報設定' },
+    { path: '/reconciliation', label: '⚠️ 乖離確認' },
   ];
 
   return (

@@ -16,16 +16,27 @@ export const MonthlyInvoicePage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<GenerateMonthlyInvoiceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [invoiceImages, setInvoiceImages] = useState<string[]>([]);
+  const [imagesLoading, setImagesLoading] = useState(false);
 
-  // ページ読み込み時にDB内の会社名・担当者名リストを取得
+  // ページ読み込み時にDB内の会社名リストを取得
   useEffect(() => {
     getDBCompanies()
       .then((res) => setCompanies(res.companies))
       .catch(() => {});
-    getDBSalesPersons()
-      .then((res) => setSalesPersons(res.sales_persons))
-      .catch(() => {});
   }, []);
+
+  // 会社名が変更されたら担当者リストを再取得
+  useEffect(() => {
+    if (companyName) {
+      getDBSalesPersons(companyName)
+        .then((res) => setSalesPersons(res.sales_persons))
+        .catch(() => {});
+    } else {
+      setSalesPersons([]);
+    }
+    setSalesPerson('');
+  }, [companyName]);
 
   // 年のリスト（2020-2030）
   const years = Array.from({ length: 11 }, (_, i) => (2020 + i).toString());
@@ -49,6 +60,25 @@ export const MonthlyInvoicePage: React.FC = () => {
 
       const response = await generateMonthlyInvoice(companyName, yearMonth, salesPerson);
       setResult(response);
+
+      // PDFを画像に変換
+      setImagesLoading(true);
+      setInvoiceImages([]);
+      try {
+        const pdfUrl = response.invoice_url.split('?')[0];
+        const filename = pdfUrl.split('/').pop();
+        if (filename) {
+          const imgRes = await fetch(`/api/pdf-to-images/${encodeURIComponent(filename)}`);
+          if (imgRes.ok) {
+            const imgData = await imgRes.json();
+            setInvoiceImages(imgData.images);
+          }
+        }
+      } catch {
+        // 画像変換失敗時はフォールバック（ダウンロードのみ）
+      } finally {
+        setImagesLoading(false);
+      }
     } catch (err: any) {
       const errorMessage =
         err?.response?.data?.detail?.error ||
@@ -250,18 +280,38 @@ export const MonthlyInvoicePage: React.FC = () => {
             </div>
           </div>
 
-          {/* PDF表示 */}
+          {/* PDF画像プレビュー */}
           <div>
             <h3 className="text-xl font-semibold text-gray-700 mb-3">
               生成された月次請求書PDF
             </h3>
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <iframe
-                src={result.invoice_url}
-                className="w-full h-[800px]"
-                title="月次請求書PDF"
-              />
-            </div>
+            {imagesLoading ? (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <p className="mt-4 text-gray-600">画像を読み込み中...</p>
+              </div>
+            ) : invoiceImages.length > 0 ? (
+              <div className="space-y-4">
+                {invoiceImages.map((img, i) => (
+                  <div key={i} className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
+                      ページ {i + 1} / {invoiceImages.length}
+                    </div>
+                    <div className="bg-white p-4">
+                      <img
+                        src={img}
+                        alt={`月次請求書 ページ ${i + 1}`}
+                        className="w-full h-auto"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="border border-dashed border-gray-300 rounded-lg p-12 text-center bg-gray-50">
+                <p className="text-gray-400">プレビューを生成できませんでした</p>
+              </div>
+            )}
           </div>
 
           {/* PDFダウンロードボタン */}

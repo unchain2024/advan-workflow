@@ -37,17 +37,15 @@ EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情
    - 例: "令和7年1月5日" → "2025/01/05"
    - 例: "2025/1" → "2025/01/01"
 
-2. **company_name**: 宛先（受取先）の会社名のみ抽出
-   - **重要な判別方法**:
-     * 納品書の**上部**に記載されている会社名を抽出
+2. **company_name**: 取引先の会社名を抽出
+   - **通常の納品書の場合**（宛先がアドバンアパレル以外）:
+     * 宛先（受取先）の会社名を抽出
      * 「御中」の**直前**または**近くに**記載されている会社名
-     * 「株式会社○○」「○○株式会社」などの法人格を含む会社名
+   - **返品伝票の場合**（宛先がアドバンアパレル）:
+     * 宛先が「ADVANAPPAREL」「アドバンアパレル」の場合、それは自社なので **発行元の会社名を抽出** する
+     * 例: 返品伝票で「ADVANAPPAREL CO.LTD. 御中」と書かれている場合、発行元（差出人）の会社名を company_name とする
    - **除外すべきもの（絶対に抽出してはいけない）**:
-     * 発行元・差出人の会社名は**絶対に除外**
-     * 納品書の**下部**に記載されている発行元の会社名
-     * 住所・電話番号の近くに記載されている会社名（発行元の可能性が高い）
-     * **「アドバンアパレル」を含む会社名は絶対に除外**（これは発行元の会社名です）
-     * **「アドバンアパレル株式会社」「株式会社アドバンアパレル」は絶対に除外**
+     * **「アドバンアパレル」「ADVANAPPAREL」を含む会社名は絶対に除外**（これは自社名です）
    - company_name から「御中」「様」「殿」は除去すること
 
 3. **slip_number**: 伝票番号または納品書番号
@@ -96,6 +94,7 @@ EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情
 - **company_name は必ず宛先（受取人）の会社名のみ抽出**すること（発行元の会社名は含めない）
 - **「アドバンアパレル」を含む会社名は絶対に抽出しない**（発行元の会社名）
 - テキスト上部に現れる会社名が宛先の可能性が高い
+- **絶対に推測・補完をしないこと**: 画像から読み取れない文字や数値は必ず null にすること。存在しないデータを作り上げてはいけない。画像に明確に記載されている情報のみを抽出すること。
 
 ## 出力形式
 
@@ -155,13 +154,33 @@ class LLMExtractor:
         images = self._pdf_to_images(pdf_path)
         print(f"  PDF → {len(images)} ページの画像に変換")
 
-        # Geminiに直接画像を送信して構造化抽出
-        print(f"\n=== Gemini APIに画像を直接送信中 ===")
-        extracted = self._extract_with_gemini(images)
-        print(f"Gemini応答: {extracted}")
+        # Geminiに直接画像を送信して構造化抽出（リトライ付き）
+        max_retries = 3
+        extracted = None
+        for attempt in range(1, max_retries + 1):
+            print(f"\n=== Gemini APIに画像を直接送信中 (試行 {attempt}/{max_retries}) ===")
+            extracted = self._extract_with_gemini(images)
+            if extracted is not None:
+                print(f"Gemini応答: {extracted}")
+                break
+            print(f"  ⚠️ 試行 {attempt} 失敗、{'リトライします...' if attempt < max_retries else '全試行失敗'}")
 
         if not extracted:
-            raise ValueError("データの抽出に失敗しました")
+            raise ValueError("データの抽出に失敗しました（3回リトライ後）")
+
+        # Geminiがリスト（複数納品書）を返した場合、1つにマージ
+        if isinstance(extracted, list):
+            print(f"  ⚠️ Geminiがリスト({len(extracted)}件)を返却 → 1件にマージ")
+            merged = extracted[0] if extracted else {}
+            all_items = []
+            for entry in extracted:
+                all_items.extend(entry.get("items", []))
+                # 最初のエントリに無い値を後続から補完
+                for key in ["date", "company_name", "slip_number", "subtotal", "tax", "total", "payment_received"]:
+                    if not merged.get(key) and entry.get(key):
+                        merged[key] = entry[key]
+            merged["items"] = all_items
+            extracted = merged
 
         # 日付の検証（YYYY/MM/DD形式のみ許可）
         date_str = extracted.get("date", "")
@@ -193,13 +212,15 @@ class LLMExtractor:
                 def normalize_for_filtering(name: str) -> str:
                     """フィルタリング用に会社名を正規化（法人格等を除去）"""
                     import re
-                    # 法人格を除去
+                    # 法人格を除去（日本語）
                     name = re.sub(r'株式会社|有限会社|合同会社|合資会社|合名会社', '', name)
+                    # 法人格を除去（英語）
+                    name = re.sub(r'\bCO\.?\s*,?\s*LTD\.?\b|\bINC\.?\b|\bCORP\.?\b', '', name, flags=re.IGNORECASE)
                     # 敬称を除去
                     name = re.sub(r'御中|様|殿', '', name)
-                    # 空白を除去
-                    name = name.replace(' ', '').replace('　', '')
-                    return name.strip()
+                    # 空白・ピリオド・カンマを除去
+                    name = name.replace(' ', '').replace('　', '').replace('.', '').replace(',', '')
+                    return name.strip().upper()
 
                 normalized_own = normalize_for_filtering(own_company_name)
                 normalized_extracted = normalize_for_filtering(company_name)
@@ -216,7 +237,7 @@ class LLMExtractor:
         merged_data = {
             "date": date_str or "",  # 検証済みの日付を使用
             "company_name": company_name,
-            "slip_number": extracted.get("slip_number", ""),
+            "slip_number": extracted.get("slip_number") or "",
             "subtotal": extracted.get("subtotal", 0),
             "tax": extracted.get("tax", 0),
             "total": extracted.get("total", 0),
@@ -232,7 +253,7 @@ class LLMExtractor:
         """PDFを画像に変換"""
         images = convert_from_path(
             str(pdf_path),
-            dpi=150,  # 解像度（高すぎるとAPI制限に引っかかる可能性）
+            dpi=300,  # 解像度（読み取り精度向上のため高めに設定）
         )
         return images
 

@@ -55,6 +55,9 @@ export interface ProcessPDFResponse {
   cumulative_tax: number;
   cumulative_total: number;
   cumulative_items_count: number;
+  company_matched: boolean;
+  sheet_company_candidates: string[];
+  suggested_company_candidates: string[];
 }
 
 export interface CompaniesAndMonthsResponse {
@@ -84,8 +87,10 @@ export interface UpdatePaymentResponse {
 export interface SaveBillingRequest {
   company_name: string;
   year_month: string;
-  delivery_note: DeliveryNote;
+  delivery_notes: DeliveryNote[];
   previous_billing: PreviousBilling;
+  sales_person?: string;
+  request_id?: string;
 }
 
 export interface RegenerateInvoiceRequest {
@@ -99,6 +104,29 @@ export interface RegenerateInvoiceRequest {
 export interface RegenerateInvoiceResponse {
   invoice_url: string;
   invoice_filename: string;
+}
+
+// 乖離チェック関連の型定義
+export interface Discrepancy {
+  company_name: string;
+  year_month: string;
+  db_subtotal: number;
+  db_tax: number;
+  sheet_subtotal: number;
+  sheet_tax: number;
+}
+
+export interface CheckDiscrepancyResponse {
+  discrepancies: Discrepancy[];
+}
+
+export interface DBDeliveryNote {
+  id: number;
+  slip_number: string;
+  date: string;
+  subtotal: number;
+  tax: number;
+  total: number;
 }
 
 // 仕入れ関連の型定義

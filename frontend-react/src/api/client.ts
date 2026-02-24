@@ -13,6 +13,10 @@ import type {
   SavePurchaseRecordRequest,
   SavePurchaseRecordResponse,
   GenerateMonthlyInvoiceResponse,
+  CheckDiscrepancyResponse,
+  DBDeliveryNote,
+  PreviousBilling,
+  CompanyInfo,
 } from '../types';
 
 // 本番環境ではVITE_API_URLを使用、開発環境では/api（Viteプロキシ経由）
@@ -164,7 +168,52 @@ export const getDBCompanies = async (): Promise<{ companies: string[] }> => {
 };
 
 // DB担当者名一覧取得API
-export const getDBSalesPersons = async (): Promise<{ sales_persons: string[] }> => {
-  const response = await apiClient.get<{ sales_persons: string[] }>('/db-sales-persons');
+export const getDBSalesPersons = async (companyName?: string): Promise<{ sales_persons: string[] }> => {
+  const params = companyName ? { company_name: companyName } : {};
+  const response = await apiClient.get<{ sales_persons: string[] }>('/db-sales-persons', { params });
+  return response.data;
+};
+
+// 会社請求情報取得API（前月請求 + 会社情報）
+export const getCompanyBillingInfo = async (companyName: string, yearMonth: string): Promise<{
+  previous_billing: PreviousBilling;
+  company_info: CompanyInfo | null;
+}> => {
+  const response = await apiClient.get<{
+    previous_billing: PreviousBilling;
+    company_info: CompanyInfo | null;
+  }>('/company-billing-info', {
+    params: { company_name: companyName, year_month: yearMonth },
+  });
+  return response.data;
+};
+
+// 乖離チェック関連API
+export const checkDiscrepancy = async (): Promise<CheckDiscrepancyResponse> => {
+  const response = await apiClient.get<CheckDiscrepancyResponse>('/check-discrepancy');
+  return response.data;
+};
+
+export const getDeliveryNotes = async (
+  companyName: string,
+  yearMonth: string
+): Promise<{ notes: DBDeliveryNote[] }> => {
+  const response = await apiClient.get<{ notes: DBDeliveryNote[] }>('/delivery-notes', {
+    params: { company_name: companyName, year_month: yearMonth },
+  });
+  return response.data;
+};
+
+export const updateDeliveryNote = async (
+  id: number,
+  subtotal: number,
+  tax: number,
+  total: number
+): Promise<{ success: boolean }> => {
+  const response = await apiClient.put<{ success: boolean }>(`/delivery-notes/${id}`, {
+    subtotal,
+    tax,
+    total,
+  });
   return response.data;
 };

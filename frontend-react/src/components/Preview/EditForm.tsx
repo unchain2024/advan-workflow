@@ -180,7 +180,8 @@ export const EditForm: React.FC<EditFormProps> = ({
                 <input
                   type="text"
                   {...register('company_name')}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                  disabled
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed"
                 />
               </div>
 
@@ -270,7 +271,8 @@ export const EditForm: React.FC<EditFormProps> = ({
                 type="number"
                 {...register('previous_amount')}
                 step="1000"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                disabled
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed"
               />
             </div>
 
@@ -282,7 +284,8 @@ export const EditForm: React.FC<EditFormProps> = ({
                 type="number"
                 {...register('payment_received_prev')}
                 step="1000"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                disabled
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed"
               />
             </div>
           </div>

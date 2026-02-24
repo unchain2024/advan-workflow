@@ -5,6 +5,7 @@ import { MonthlyInvoicePage } from './pages/MonthlyInvoicePage';
 import { PurchasePage } from './pages/PurchasePage';
 import { PaymentPage } from './pages/PaymentPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ReconciliationPage } from './pages/ReconciliationPage';
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
           <Route path="/purchase" element={<PurchasePage />} />
           <Route path="/payment" element={<PaymentPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/reconciliation" element={<ReconciliationPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

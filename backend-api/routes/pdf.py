@@ -69,6 +69,9 @@ class ProcessPDFResponse(BaseModel):
     cumulative_tax: int = 0
     cumulative_total: int = 0
     cumulative_items_count: int = 0
+    company_matched: bool = True
+    sheet_company_candidates: list[str] = []
+    suggested_company_candidates: list[str] = []
 
 
 class RegenerateInvoiceRequest(BaseModel):
@@ -82,6 +85,61 @@ class RegenerateInvoiceRequest(BaseModel):
 class RegenerateInvoiceResponse(BaseModel):
     invoice_url: str
     invoice_filename: str
+
+
+def _extract_filename_keywords(filename: str) -> list[str]:
+    """ファイル名から会社名に関連するキーワードを抽出
+
+    例: "0326バロック返品伝票_佐藤.pdf" → ["バロック"]
+    """
+    import re
+    name = re.sub(r'\.\w+$', '', filename)  # 拡張子除去
+    name = re.sub(r'^\d{4,8}', '', name)  # 先頭の日付除去
+    # 文書タイプ・一般キーワードを除去
+    name = re.sub(r'納品書|請求書|返品伝票|返品|伝票|明細|見積|売上', '', name)
+    name = name.replace('_', ' ').replace('-', ' ').replace('　', ' ').strip()
+    keywords = [k.strip() for k in name.split() if len(k.strip()) >= 2]
+    if not keywords and len(name.strip()) >= 2:
+        keywords = [name.strip()]
+    return keywords
+
+
+def _score_company_candidate(
+    candidate: str, extracted_name: str, filename_keywords: list[str]
+) -> int:
+    """シート会社名候補のスコアを算出（高いほど類似）
+
+    - ファイル名キーワードの部分一致: +10
+    - 抽出会社名トークンの部分一致: +5
+    """
+    import re
+    import unicodedata
+    score = 0
+    # NFKC正規化（濁点の合成形/分解形の差異、半角/全角の差異を吸収）
+    candidate_n = unicodedata.normalize('NFKC', candidate)
+    # 法人格を除去して正規化
+    candidate_clean = re.sub(
+        r'[（(]株[）)]|株式会社|有限会社|㈱|合同会社', '', candidate_n
+    ).strip()
+
+    # ファイル名キーワードによる部分一致
+    for kw in filename_keywords:
+        kw_n = unicodedata.normalize('NFKC', kw)
+        if kw_n in candidate_clean or kw_n in candidate_n:
+            score += 10
+
+    # 抽出された会社名のトークンによる部分一致
+    name_clean = re.sub(
+        r'CO\.?,?\s*LTD\.?|INC\.?|CORP\.?|LTD\.?|LIMITED',
+        '', extracted_name, flags=re.IGNORECASE,
+    ).strip()
+    name_tokens = [t for t in name_clean.split() if len(t) >= 2]
+    for token in name_tokens:
+        token_n = unicodedata.normalize('NFKC', token)
+        if token_n.lower() in candidate_clean.lower():
+            score += 5
+
+    return score
 
 
 def extract_year_month(date_str: str) -> str:
@@ -142,10 +200,37 @@ async def process_pdf(
         canonical_name = sheets_client.get_canonical_company_name(
             effective_company_name, year=target_year
         )
+        company_matched = True
+        sheet_company_candidates = []
+        suggested_company_candidates = []
         if canonical_name:
             if canonical_name != effective_company_name:
                 print(f"  会社名を正規化: '{effective_company_name}' → '{canonical_name}'")
             effective_company_name = canonical_name
+        else:
+            # マッチしなかった場合、シートの会社名候補を返す
+            company_matched = False
+            try:
+                sheet = sheets_client._get_billing_sheet_by_year(target_year or year)
+                col_a_values = sheet.col_values(1)
+                seen = set()
+                for v in col_a_values[2:]:
+                    if v and v not in seen:
+                        seen.add(v)
+                        sheet_company_candidates.append(v)
+            except Exception:
+                pass
+            # ファイル名＋抽出会社名からキーワードを抽出してスコアリング
+            filename_keywords = _extract_filename_keywords(file.filename or "")
+            scored = [
+                (name, _score_company_candidate(name, effective_company_name, filename_keywords))
+                for name in sheet_company_candidates
+            ]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            suggested_company_candidates = [name for name, s in scored if s > 0]
+            sheet_company_candidates = [name for name, _ in scored]
+            print(f"  会社名マッチなし: '{effective_company_name}' (file: {file.filename})")
+            print(f"  キーワード: {filename_keywords}, 類似候補: {[(n, s) for n, s in scored if s > 0]}")
         delivery_note.company_name = effective_company_name
 
         # 2. 納品書PDFをoutputディレクトリに保存
@@ -173,92 +258,31 @@ async def process_pdf(
             effective_company_name, year_month
         )
 
-        # 5. 月次明細DBに保存（請求書生成前に保存して累積データを取得する）
-        from src.database import MonthlyItemsDB
-        from src.utils import parse_year_month
-
-        if year and month:
-            year_month_str = f"{year}年{month}月"
-        else:
-            year_month_str = parse_year_month(delivery_note.date)
-
-        db = MonthlyItemsDB()
-        if year_month_str:
-            # バッチの最初のファイルの場合、既存レコードを削除して再作成
-            if reset_existing:
-                db.delete_monthly_items(
-                    company_name=effective_company_name,
-                    year_month=year_month_str,
-                )
-            db.save_monthly_items(
-                company_name=effective_company_name,
-                year_month=year_month_str,
-                delivery_note=delivery_note,
-                sales_person=sales_person,
-            )
-
-        # 6. 累積データから請求書PDF生成（複数納品書を合算）
+        # 5. 単一納品書で請求書PDF生成（DB保存は「書き込む」ボタン時に行う）
         invoice_generator = InvoiceGenerator()
 
         safe_company_name = effective_company_name.replace("/", "_").replace("\\", "_")
 
-        if year_month_str:
-            # DB内の全納品書データを取得して累積請求書を生成
-            all_notes = db.get_monthly_items(
-                company_name=effective_company_name,
-                year_month=year_month_str,
-            )
+        date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
+        slip_id_safe = delivery_note.slip_number.replace("/", "_").replace("\\", "_") if delivery_note.slip_number else ""
+        invoice_filename = f"invoice_{safe_company_name}_{date_str}_{slip_id_safe}.pdf"
+        invoice_path = output_dir / invoice_filename
 
-            year_month_safe = year_month_str.replace("年", "_").replace("月", "")
-            invoice_filename = f"invoice_{safe_company_name}_{year_month_safe}.pdf"
-            invoice_path = output_dir / invoice_filename
+        # 古いPDFを削除（再生成のため）
+        if invoice_path.exists():
+            invoice_path.unlink()
 
-            # 古いPDFを削除（再生成のため）
-            if invoice_path.exists():
-                invoice_path.unlink()
-
-            invoice_generator.generate_monthly(
-                delivery_notes=all_notes if all_notes else [delivery_note],
-                company_name=effective_company_name,
-                year_month=year_month_str,
-                company_info=company_info,
-                previous_billing=previous_billing,
-                output_path=invoice_path,
-            )
-        else:
-            # year_month_strが取得できない場合は単一ファイルで生成
-            date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
-            invoice_filename = f"invoice_{safe_company_name}_{date_str}.pdf"
-            invoice_path = output_dir / invoice_filename
-
-            invoice_generator.generate(
-                delivery_note=delivery_note,
-                company_info=company_info,
-                previous_billing=previous_billing,
-                output_path=invoice_path,
-            )
+        invoice_generator.generate(
+            delivery_note=delivery_note,
+            company_info=company_info,
+            previous_billing=previous_billing,
+            output_path=invoice_path,
+        )
 
         # レスポンス作成（キャッシュバスティング用にタイムスタンプ追加）
         timestamp = int(time.time())
         invoice_url = f"/output/{invoice_filename}?t={timestamp}"
         delivery_pdf_url = f"/output/{delivery_filename}?t={timestamp}"
-
-        # 累積データを計算
-        cumulative_subtotal = 0
-        cumulative_tax = 0
-        cumulative_total = 0
-        cumulative_items_count = 0
-        if year_month_str and all_notes:
-            for note in all_notes:
-                cumulative_subtotal += note.subtotal
-                cumulative_tax += note.tax
-                cumulative_total += note.total
-                cumulative_items_count += len(note.items)
-        else:
-            cumulative_subtotal = delivery_note.subtotal
-            cumulative_tax = delivery_note.tax
-            cumulative_total = delivery_note.total
-            cumulative_items_count = len(delivery_note.items)
 
         return ProcessPDFResponse(
             delivery_note=DeliveryNoteResponse(
@@ -303,10 +327,13 @@ async def process_pdf(
             delivery_pdf_url=delivery_pdf_url,
             year_month=year_month,
             sales_person=sales_person,
-            cumulative_subtotal=cumulative_subtotal,
-            cumulative_tax=cumulative_tax,
-            cumulative_total=cumulative_total,
-            cumulative_items_count=cumulative_items_count,
+            cumulative_subtotal=delivery_note.subtotal,
+            cumulative_tax=delivery_note.tax,
+            cumulative_total=delivery_note.total,
+            cumulative_items_count=len(delivery_note.items),
+            company_matched=company_matched,
+            sheet_company_candidates=sheet_company_candidates,
+            suggested_company_candidates=suggested_company_candidates,
         )
 
     except Exception as e:
@@ -410,31 +437,6 @@ async def regenerate_invoice(request: RegenerateInvoiceRequest):
             previous_billing=previous_billing,
             output_path=invoice_path,
         )
-
-        # 月次明細DBを更新（編集後のデータを反映）
-        if request.year_month:
-            try:
-                from src.database import MonthlyItemsDB
-                from src.utils import parse_year_month
-
-                # year_month が "YYYY-MM" 形式の場合は "YYYY年M月" 形式に変換
-                year_month_str = request.year_month
-                if '-' in year_month_str and '年' not in year_month_str:
-                    parts = year_month_str.split('-')
-                    year_month_str = f"{int(parts[0])}年{int(parts[1])}月"
-
-                db = MonthlyItemsDB()
-                db.update_monthly_item(
-                    company_name=delivery_note.company_name,
-                    year_month=year_month_str,
-                    delivery_note=delivery_note,
-                    sales_person=request.sales_person or "",
-                )
-                print(f"月次明細DB更新: {delivery_note.company_name} ({year_month_str})")
-            except Exception as db_error:
-                print(f"月次明細DB更新エラー（PDF生成は成功）: {db_error}")
-                import traceback
-                traceback.print_exc()
 
         # キャッシュバスティング用にタイムスタンプを追加
         timestamp = int(time.time())
@@ -669,6 +671,40 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
         raise HTTPException(status_code=500, detail=error_detail)
 
 
+class CompanyBillingInfoResponse(BaseModel):
+    previous_billing: PreviousBillingResponse
+    company_info: Optional[CompanyInfoResponse]
+
+
+@router.get("/company-billing-info", response_model=CompanyBillingInfoResponse)
+async def get_company_billing_info(company_name: str, year_month: str):
+    """指定した会社・年月の前月請求情報＋会社情報を取得"""
+    import unicodedata
+    company_name = unicodedata.normalize('NFKC', company_name)
+    sheets_client = GoogleSheetsClient()
+    canonical = sheets_client.get_canonical_company_name(company_name)
+    if canonical:
+        company_name = canonical
+    previous_billing = sheets_client.get_previous_billing(company_name, year_month)
+    company_info = sheets_client.get_company_info(company_name)
+    return CompanyBillingInfoResponse(
+        previous_billing=PreviousBillingResponse(
+            previous_amount=previous_billing.previous_amount,
+            payment_received=previous_billing.payment_received,
+            carried_over=previous_billing.carried_over,
+            sales_amount=previous_billing.sales_amount or 0,
+            tax_amount=previous_billing.tax_amount or 0,
+            current_amount=previous_billing.current_amount or 0,
+        ),
+        company_info=CompanyInfoResponse(
+            company_name=company_info.company_name,
+            postal_code=company_info.postal_code,
+            address=company_info.address,
+            department=company_info.department,
+        ) if company_info else None,
+    )
+
+
 class DBCompaniesResponse(BaseModel):
     companies: list[str]
 
@@ -688,11 +724,11 @@ class DBSalesPersonsResponse(BaseModel):
 
 
 @router.get("/db-sales-persons", response_model=DBSalesPersonsResponse)
-async def get_db_sales_persons():
+async def get_db_sales_persons(company_name: str = ""):
     """月次明細DBに保存されている担当者名一覧を取得"""
     from src.database import MonthlyItemsDB
 
     db = MonthlyItemsDB()
-    sales_persons = db.get_distinct_sales_persons()
+    sales_persons = db.get_distinct_sales_persons(company_name=company_name)
     return DBSalesPersonsResponse(sales_persons=sales_persons)
 

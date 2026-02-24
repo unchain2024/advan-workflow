@@ -10,8 +10,8 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
   invoicePdfUrl,
 }) => {
   const [invoiceImages, setInvoiceImages] = useState<string[]>([]);
-  const [deliveryImages, setDeliveryImages] = useState<(string | null)[]>([]);
-  const [currentDeliveryIndex, setCurrentDeliveryIndex] = useState(0);
+  const [deliveryPages, setDeliveryPages] = useState<string[]>([]);
+  const [currentDeliveryPage, setCurrentDeliveryPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,8 +33,8 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
           setInvoiceImages(data.images);
         }
 
-        // 全ての納品書PDFを画像に変換
-        const loadedDeliveryImages: (string | null)[] = [];
+        // 全ての納品書PDFの全ページを画像に変換
+        const allPages: string[] = [];
         for (const pdfUrl of deliveryPdfUrls) {
           const deliveryUrl = pdfUrl.split('?')[0];
           const deliveryFilename = deliveryUrl.split('/').pop();
@@ -43,17 +43,15 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
               const response = await fetch(`/api/pdf-to-images/${encodeURIComponent(deliveryFilename)}`);
               if (response.ok) {
                 const data = await response.json();
-                loadedDeliveryImages.push(data.images.length > 0 ? data.images[0] : null);
-              } else {
-                loadedDeliveryImages.push(null);
+                allPages.push(...data.images);
               }
             } catch {
-              loadedDeliveryImages.push(null);
+              // skip
             }
           }
         }
-        setDeliveryImages(loadedDeliveryImages);
-        setCurrentDeliveryIndex(0);
+        setDeliveryPages(allPages);
+        setCurrentDeliveryPage(0);
       } catch (err) {
         setError(err instanceof Error ? err.message : '画像の読み込みに失敗しました');
       } finally {
@@ -81,8 +79,8 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
     );
   }
 
-  const totalDeliveries = deliveryImages.length;
-  const currentDeliveryImage = totalDeliveries > 0 ? deliveryImages[currentDeliveryIndex] : null;
+  const totalPages = deliveryPages.length;
+  const currentPageImage = totalPages > 0 ? deliveryPages[currentDeliveryPage] : null;
 
   return (
     <div>
@@ -95,34 +93,34 @@ export const PDFPreviewImage: React.FC<PDFPreviewImageProps> = ({
       <div className="grid grid-cols-2 gap-6">
         {/* 納品書（左） */}
         <div>
-          {currentDeliveryImage ? (
+          {currentPageImage ? (
             <div className="border border-gray-200 rounded-lg overflow-hidden">
               <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
                 📥 納品書（入力）
               </div>
               <div className="bg-white p-4">
                 <img
-                  src={currentDeliveryImage}
-                  alt={`納品書 ${currentDeliveryIndex + 1}`}
+                  src={currentPageImage}
+                  alt={`納品書 ページ ${currentDeliveryPage + 1}`}
                   className="w-full h-auto"
                 />
               </div>
               {/* ページ切り替え */}
-              {totalDeliveries > 1 && (
+              {totalPages > 1 && (
                 <div className="flex items-center justify-center gap-4 py-3 bg-gray-50 border-t border-gray-200">
                   <button
-                    onClick={() => setCurrentDeliveryIndex((prev) => Math.max(0, prev - 1))}
-                    disabled={currentDeliveryIndex === 0}
+                    onClick={() => setCurrentDeliveryPage((prev) => Math.max(0, prev - 1))}
+                    disabled={currentDeliveryPage === 0}
                     className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold"
                   >
                     ◀
                   </button>
                   <span className="text-sm font-medium text-gray-600">
-                    {currentDeliveryIndex + 1} / {totalDeliveries}
+                    ページ {currentDeliveryPage + 1} / {totalPages}
                   </span>
                   <button
-                    onClick={() => setCurrentDeliveryIndex((prev) => Math.min(totalDeliveries - 1, prev + 1))}
-                    disabled={currentDeliveryIndex === totalDeliveries - 1}
+                    onClick={() => setCurrentDeliveryPage((prev) => Math.min(totalPages - 1, prev + 1))}
+                    disabled={currentDeliveryPage === totalPages - 1}
                     className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold"
                   >
                     ▶

@@ -46,8 +46,12 @@ def normalize_company_name(name: str) -> str:
     if not name:
         return ""
 
-    # 法人格を除去
-    name = re.sub(r'株式会社|有限会社|\(株\)|（株）|\(有\)|（有）', '', name)
+    # NFKC正規化（濁点の合成形/分解形の差異、半角/全角カタカナの差異を吸収）
+    import unicodedata
+    name = unicodedata.normalize('NFKC', name)
+
+    # 法人格を除去（㈱ = U+3231, ㈲ = U+3232 も対応）
+    name = re.sub(r'株式会社|有限会社|\(株\)|（株）|\(有\)|（有）|㈱|㈲', '', name)
 
     # 敬称を除去
     name = re.sub(r'御中|様|殿', '', name)
@@ -59,6 +63,89 @@ def normalize_company_name(name: str) -> str:
     name = re.sub(r'\s+', '', name)
 
     return name.strip()
+
+
+def match_company_name(search_name: str, candidates: list[str]) -> Optional[str]:
+    """正規化した会社名で最適な候補を選択
+
+    マッチング優先度:
+    1. 正規化後の完全一致
+    2. 部分一致がある場合、正規化名の長さが最も近いもの（最短差）
+
+    例:
+    - "アダストリア" vs ["アダストリア", "アダストリアHARE事業部"]
+      → "アダストリア"（完全一致）
+    - "アダストリアHARE事業部" vs ["アダストリア", "アダストリアHARE事業部"]
+      → "アダストリアHARE事業部"（完全一致）
+
+    Args:
+        search_name: 検索する会社名（正規化前）
+        candidates: 候補の会社名リスト（正規化前）
+
+    Returns:
+        マッチした候補の元の文字列、見つからない場合は None
+    """
+    normalized_search = normalize_company_name(search_name)
+    if not normalized_search:
+        return None
+
+    # 1. 完全一致を優先
+    for candidate in candidates:
+        if not candidate:
+            continue
+        normalized_candidate = normalize_company_name(str(candidate))
+        if normalized_candidate and normalized_search == normalized_candidate:
+            return str(candidate).strip()
+
+    # 2. 部分一致フォールバック（長さが最も近いものを選択）
+    best_match: Optional[str] = None
+    best_diff = float('inf')
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        normalized_candidate = normalize_company_name(str(candidate))
+        if not normalized_candidate:
+            continue
+
+        if normalized_search in normalized_candidate or normalized_candidate in normalized_search:
+            diff = abs(len(normalized_search) - len(normalized_candidate))
+            if diff < best_diff:
+                best_diff = diff
+                best_match = str(candidate).strip()
+
+    return best_match
+
+
+def _find_company_row(
+    company_name: str, col_a_values: list[str], start_row: int = 3
+) -> Optional[int]:
+    """Column A の会社名リストから最適な行番号を返す
+
+    match_company_name() を使って完全一致優先・最短差フォールバックで検索。
+
+    Args:
+        company_name: 検索する会社名
+        col_a_values: Column A のセル値リスト（0-indexed）
+        start_row: データ開始行（1-indexed、デフォルト3 = Row 3）
+
+    Returns:
+        行番号（1-indexed）、見つからない場合は None
+    """
+    # start_row は 1-indexed、col_a_values は 0-indexed
+    offset = start_row - 1  # Row 3 → index 2
+    candidates = col_a_values[offset:]
+
+    matched = match_company_name(company_name, candidates)
+    if matched is None:
+        return None
+
+    # マッチした候補の行番号を特定
+    for i, cell_value in enumerate(candidates):
+        if str(cell_value).strip() == matched:
+            return i + start_row
+
+    return None
 
 
 @dataclass
@@ -88,6 +175,36 @@ class PaymentTerms:
     closing_day: str  # 締め日（「月末」または「20日」など）
     payment_day: str  # 支払日（「翌月末」または「翌月10日」など）
     payment_method: str = ""  # 支払方法（任意）
+
+
+def parse_amount(value) -> int:
+    """セル値を数値に変換（数値型はそのまま、文字列はパース）
+
+    対応フォーマット:
+    - 数値型（int, float）
+    - カンマ区切り: 1,234
+    - 通貨記号: ¥1,234 / ￥1,234 / 1,234円
+    - 会計書式の括弧: (3,000) → -3000
+    - 日本語マイナス記号: ▲3,000 / △3,000
+    """
+    if value is None or value == "":
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    s = str(value)
+    negative = False
+    if s.startswith('(') and s.endswith(')'):
+        s = s[1:-1]
+        negative = True
+    if s.startswith(('▲', '△')):
+        s = s[1:]
+        negative = True
+    cleaned = s.replace(',', '').replace('，', '').replace(' ', '').replace('¥', '').replace('￥', '').replace('円', '')
+    try:
+        result = int(float(cleaned))
+        return -result if negative else result
+    except ValueError:
+        return 0
 
 
 class GoogleSheetsClient:
@@ -276,21 +393,12 @@ class GoogleSheetsClient:
 
             sheet = self._get_billing_sheet_by_year(year)
             col_a_values = sheet.col_values(1)
-            normalized_search = normalize_company_name(company_name)
+            candidates = [v for v in col_a_values[2:] if v]  # Row 3以降
 
-            if not normalized_search:
-                return None
-
-            for cell_value in col_a_values[2:]:  # Row 3以降
-                if not cell_value:
-                    continue
-                normalized_cell = normalize_company_name(str(cell_value))
-                if normalized_cell and (normalized_search in normalized_cell or normalized_cell in normalized_search):
-                    canonical = str(cell_value).strip()
-                    print(f"    正規会社名取得: '{company_name}' → '{canonical}'")
-                    return canonical
-
-            return None
+            canonical = match_company_name(company_name, candidates)
+            if canonical:
+                print(f"    正規会社名取得: '{company_name}' → '{canonical}'")
+            return canonical
         except Exception as e:
             print(f"    正規会社名の取得エラー: {e}")
             return None
@@ -310,27 +418,25 @@ class GoogleSheetsClient:
         )
         records = sheet.get_all_records()
 
-        # 検索する会社名を正規化
-        normalized_search = normalize_company_name(company_name)
+        # match_company_name で最適な候補を選択
+        master_names = [str(r.get("会社名", "")) for r in records]
+        matched = match_company_name(company_name, master_names)
 
-        for record in records:
-            master_name = str(record.get("会社名", ""))
-            # マスター側の会社名も正規化
-            normalized_master = normalize_company_name(master_name)
+        if matched:
+            # マッチしたレコードを取得
+            for record in records:
+                if str(record.get("会社名", "")) == matched:
+                    master_name = matched
+                    address = str(record.get("住所", ""))
+                    building_name = str(record.get("ビル名", ""))
+                    full_address = f"{address} {building_name}".strip()
 
-            # 正規化した名前で部分一致検索
-            if normalized_master and (normalized_search in normalized_master or normalized_master in normalized_search):
-                # 住所とビル名を結合
-                address = str(record.get("住所", ""))
-                building_name = str(record.get("ビル名", ""))
-                full_address = f"{address} {building_name}".strip()
-
-                return CompanyInfo(
-                    company_name=master_name,
-                    postal_code=str(record.get("郵便番号", "")),
-                    address=full_address,
-                    department=str(record.get("事業部", "")),
-                )
+                    return CompanyInfo(
+                        company_name=master_name,
+                        postal_code=str(record.get("郵便番号", "")),
+                        address=full_address,
+                        department=str(record.get("事業部", "")),
+                    )
         return None
 
     def save_delivery_note(self, delivery_note: DeliveryNote, company_info: Optional[CompanyInfo]):
@@ -401,14 +507,7 @@ class GoogleSheetsClient:
 
             # 1. 会社の行を検索（今月のシートで）
             col_a_values = current_sheet.col_values(1)
-            normalized_search = normalize_company_name(company_name)
-
-            company_row = None
-            for i, cell_value in enumerate(col_a_values[2:], start=3):
-                normalized_cell = normalize_company_name(str(cell_value))
-                if normalized_cell and (normalized_search in normalized_cell or normalized_cell in normalized_search):
-                    company_row = i
-                    break
+            company_row = _find_company_row(company_name, col_a_values, start_row=3)
 
             if company_row is None:
                 print(f"    会社 '{company_name}' が売上集計表に見つかりません")
@@ -426,12 +525,7 @@ class GoogleSheetsClient:
             prev_company_row = company_row
             if prev_year != year:
                 prev_col_a = prev_sheet.col_values(1)
-                prev_company_row = None
-                for i, cell_value in enumerate(prev_col_a[2:], start=3):
-                    normalized_cell = normalize_company_name(str(cell_value))
-                    if normalized_cell and (normalized_search in normalized_cell or normalized_cell in normalized_search):
-                        prev_company_row = i
-                        break
+                prev_company_row = _find_company_row(company_name, prev_col_a, start_row=3)
 
             # 3. 今月の列を検索（今月のシートで）
             current_row1_values = current_sheet.row_values(1)
@@ -441,16 +535,7 @@ class GoogleSheetsClient:
                     current_month_col = i + 1
                     break
 
-            # 4. 値を取得
-            def parse_amount(value_str: str) -> int:
-                """金額文字列を数値に変換"""
-                if not value_str:
-                    return 0
-                cleaned = str(value_str).replace(',', '').replace(' ', '').replace('¥', '').replace('円', '')
-                try:
-                    return int(float(cleaned))
-                except ValueError:
-                    return 0
+            # 4. 値を取得（モジュールレベルの parse_amount を使用）
 
             # 前回御請求額 = 前月の残高
             previous_amount = 0
@@ -461,10 +546,27 @@ class GoogleSheetsClient:
 
             # 御入金額 = 今月の消滅（入金額）
             payment_received = 0
+            sales_amount = 0
+            tax_amount = 0
             if current_month_col:
                 shoumetsu_col = current_month_col + 2  # 消滅は年月列+2
                 current_shoumetsu = current_sheet.cell(company_row, shoumetsu_col).value or ""
                 payment_received = parse_amount(current_shoumetsu)
+
+                # 今月の既存「発生」「消費税」を読み取り
+                from gspread.utils import ValueRenderOption, rowcol_to_a1
+                hassei_raw = current_sheet.get(
+                    rowcol_to_a1(company_row, current_month_col),
+                    value_render_option=ValueRenderOption.unformatted,
+                )
+                tax_raw = current_sheet.get(
+                    rowcol_to_a1(company_row, current_month_col + 1),
+                    value_render_option=ValueRenderOption.unformatted,
+                )
+                hassei_val = hassei_raw[0][0] if hassei_raw and hassei_raw[0] else 0
+                tax_val = tax_raw[0][0] if tax_raw and tax_raw[0] else 0
+                sales_amount = parse_amount(hassei_val)
+                tax_amount = parse_amount(tax_val)
 
             # 差引繰越残高 = 前回御請求額 - 御入金額
             carried_over = previous_amount - payment_received
@@ -472,14 +574,15 @@ class GoogleSheetsClient:
             print(f"    前月({prev_year_month})残高: ¥{previous_amount:,}")
             print(f"    今月({current_year_month_str})消滅（入金額）: ¥{payment_received:,}")
             print(f"    差引繰越残高: ¥{carried_over:,}")
+            print(f"    今月既存: 発生 ¥{sales_amount:,}, 消費税 ¥{tax_amount:,}")
 
             return PreviousBilling(
                 previous_amount=previous_amount,
                 payment_received=payment_received,
                 carried_over=carried_over,
-                sales_amount=0,  # 請求書には使わない
-                tax_amount=0,    # 請求書には使わない
-                current_amount=0,  # 請求書には使わない
+                sales_amount=sales_amount,
+                tax_amount=tax_amount,
+                current_amount=0,
             )
 
         except Exception as e:
@@ -522,6 +625,7 @@ class GoogleSheetsClient:
         company_name: str,
         previous_billing: PreviousBilling,
         delivery_note: DeliveryNote,
+        target_year_month: str = "",
     ):
         """請求管理スプレッドシートの既存セルを更新
 
@@ -531,19 +635,27 @@ class GoogleSheetsClient:
         - Row 3+: 会社データ
 
         処理:
-        1. 日付から年月を特定
+        1. ユーザー選択の年月（target_year_month）を使用。未指定なら日付から算出
         2. Row 1から該当する年月の列を検索
         3. Column Aから会社名（正規化して一致）の行を検索
         4. 「発生」と「消費税」のセルを更新
-        """
-        # 1. 日付から年月を取得
-        target_year_month = self._parse_year_month(delivery_note.date)
-        if not target_year_month:
-            print(f"    エラー: 日付のパースに失敗しました: {delivery_note.date}")
-            return
 
-        # 日付から年を抽出してシートを選択
-        target_year = int(delivery_note.date.split('/')[0])
+        Args:
+            target_year_month: ユーザー選択の年月（"YYYY年M月"形式）。
+                               指定すると納品書日付に関わらずこの年月の列に書き込む。
+        """
+        # 1. 年月を決定（ユーザー選択優先、未指定なら日付から算出）
+        if target_year_month:
+            year_month = target_year_month
+            year_match = re.match(r'(\d{4})', target_year_month)
+            target_year = int(year_match.group(1)) if year_match else int(delivery_note.date.split('/')[0])
+        else:
+            year_month = self._parse_year_month(delivery_note.date)
+            if not year_month:
+                print(f"    エラー: 日付のパースに失敗しました: {delivery_note.date}")
+                return
+            target_year = int(delivery_note.date.split('/')[0])
+
         sheet = self._get_billing_sheet_by_year(target_year)
 
         # 2. Row 1から年月の列を検索
@@ -551,12 +663,12 @@ class GoogleSheetsClient:
         month_col_index = None
 
         for i, cell_value in enumerate(row1_values):
-            if target_year_month in str(cell_value):
+            if year_month in str(cell_value):
                 month_col_index = i + 1  # gspreadは1-indexed
                 break
 
         if month_col_index is None:
-            print(f"    エラー: シートに年月 '{target_year_month}' が見つかりません")
+            print(f"    エラー: シートに年月 '{year_month}' が見つかりません")
             print(f"    利用可能な年月: {[v for v in row1_values if v]}")
             return
 
@@ -567,7 +679,7 @@ class GoogleSheetsClient:
 
         # 年月列の周辺のラベルを確認
         labels_around_month = row2_values[month_col_index-1:month_col_index+4] if month_col_index < len(row2_values) else []
-        print(f"    年月 '{target_year_month}' 周辺のラベル: {labels_around_month}")
+        print(f"    年月 '{year_month}' 周辺のラベル: {labels_around_month}")
 
         # 各列の位置
         hassei_col = month_col_index      # 発生
@@ -583,21 +695,15 @@ class GoogleSheetsClient:
 
         print(f"    列構造: 発生({hassei_col})={hassei_label}, 消費税({tax_col})={tax_label}, 消滅({shoumetsu_col})={shoumetsu_label}, 残高({zandaka_col})={zandaka_label}")
 
-        # 4. Column Aから会社名の行を検索（正規化マッチング）
+        # 4. Column Aから会社名の行を検索（完全一致優先マッチング）
         col_a_values = sheet.col_values(1)
-        normalized_search = normalize_company_name(company_name)
+        company_row = _find_company_row(company_name, col_a_values, start_row=3)
 
-        company_row = None
-        for i, cell_value in enumerate(col_a_values[2:], start=3):  # Row 3から開始
-            normalized_cell = normalize_company_name(str(cell_value))
-            if normalized_search in normalized_cell or normalized_cell in normalized_search:
-                company_row = i
-                print(f"    会社 '{company_name}' を行 {company_row} で発見: '{cell_value}'")
-                break
-
-        if company_row is None:
+        if company_row is not None:
+            print(f"    会社 '{company_name}' を行 {company_row} で発見")
+        else:
             print(f"    エラー: 会社 '{company_name}' がシートに見つかりません")
-            print(f"    検索した正規化名: '{normalized_search}'")
+            print(f"    検索した正規化名: '{normalize_company_name(company_name)}'")
             print(f"    利用可能な会社: {[normalize_company_name(v) for v in col_a_values[2:10]]}")
             return
 
@@ -619,33 +725,7 @@ class GoogleSheetsClient:
 
         print(f"    [DEBUG] セル読み取り: 発生=({company_row}, {hassei_col}) raw={current_hassei_val!r} (type={type(current_hassei_val).__name__})")
         print(f"    [DEBUG] セル読み取り: 消費税=({company_row}, {tax_col}) raw={current_tax_val!r} (type={type(current_tax_val).__name__})")
-        print(f"    [DEBUG] delivery_note.date='{delivery_note.date}', target_year_month='{target_year_month}'")
-
-        def parse_amount(value) -> int:
-            """セル値を数値に変換（数値型はそのまま、文字列はパース）"""
-            if value is None or value == "":
-                return 0
-            # 既に数値型ならそのまま
-            if isinstance(value, (int, float)):
-                return int(value)
-            s = str(value)
-            # 会計書式の括弧: (3,000) → -3000
-            negative = False
-            if s.startswith('(') and s.endswith(')'):
-                s = s[1:-1]
-                negative = True
-            # 日本語マイナス記号: ▲3,000 / △3,000
-            if s.startswith(('▲', '△')):
-                s = s[1:]
-                negative = True
-            # カンマ、空白、円記号などを除去
-            cleaned = s.replace(',', '').replace('，', '').replace(' ', '').replace('¥', '').replace('￥', '').replace('円', '')
-            try:
-                result = int(float(cleaned))
-                return -result if negative else result
-            except ValueError:
-                print(f"    [WARNING] parse_amount失敗: '{value}' → cleaned='{cleaned}'")
-                return 0
+        print(f"    [DEBUG] delivery_note.date='{delivery_note.date}', year_month='{year_month}'")
 
         current_hassei = parse_amount(current_hassei_val)
         current_tax = parse_amount(current_tax_val)
@@ -664,6 +744,56 @@ class GoogleSheetsClient:
         sheet.update_cell(company_row, hassei_col, new_hassei)
         sheet.update_cell(company_row, tax_col, new_tax)
 
+    def get_billing_amounts(self, year: int) -> list[dict]:
+        """指定年のシートから全会社・全月の「発生」「消費税」を一括読み取り
+
+        Args:
+            year: 対象年（例: 2026）
+
+        Returns:
+            list[dict]: [{company_name, year_month, subtotal, tax}, ...]
+        """
+        sheet = self._get_billing_sheet_by_year(year)
+        all_values = sheet.get_all_values()
+
+        if len(all_values) < 3:
+            return []
+
+        row1 = all_values[0]  # 年月ヘッダー行
+
+        # 年月列の位置を特定（"YYYY年M月" を含むセル）
+        month_columns: list[tuple[int, str]] = []  # (col_index, year_month_str)
+        for i, cell_value in enumerate(row1):
+            if "年" in str(cell_value) and "月" in str(cell_value):
+                month_columns.append((i, str(cell_value).strip()))
+
+        results = []
+        # Row 3以降が会社データ
+        for row in all_values[2:]:
+            company_name = str(row[0]).strip() if row else ""
+            if not company_name:
+                continue
+
+            for col_idx, year_month_str in month_columns:
+                hassei_idx = col_idx      # 発生
+                tax_idx = col_idx + 1     # 消費税
+
+                hassei_val = row[hassei_idx] if hassei_idx < len(row) else ""
+                tax_val = row[tax_idx] if tax_idx < len(row) else ""
+
+                subtotal = parse_amount(hassei_val)
+                tax = parse_amount(tax_val)
+
+                # 0/0 のエントリもスキップしない（DBにデータがある可能性）
+                results.append({
+                    "company_name": company_name,
+                    "year_month": year_month_str,
+                    "subtotal": subtotal,
+                    "tax": tax,
+                })
+
+        return results
+
     def get_payment_terms(self, supplier_name: str) -> Optional[PaymentTerms]:
         """締め日マスターから支払条件を取得（全タブを検索）
 
@@ -680,8 +810,6 @@ class GoogleSheetsClient:
         try:
             spreadsheet = self.client.open_by_key(PURCHASE_TERMS_SPREADSHEET_ID)
             worksheets = spreadsheet.worksheets()
-
-            normalized_search = normalize_company_name(supplier_name)
 
             for sheet in worksheets:
                 print(f"    締め日マスター検索中: タブ「{sheet.title}」")
@@ -710,21 +838,24 @@ class GoogleSheetsClient:
                 if supplier_col is None:
                     continue
 
-                for row in all_values[1:]:
-                    if len(row) <= supplier_col:
-                        continue
+                # 全仕入先名を集めて match_company_name で最適マッチ
+                supplier_names = [
+                    str(row[supplier_col]) for row in all_values[1:]
+                    if len(row) > supplier_col
+                ]
+                matched = match_company_name(supplier_name, supplier_names)
 
-                    master_name = str(row[supplier_col])
-                    normalized_master = normalize_company_name(master_name)
-
-                    if normalized_master and (normalized_search in normalized_master or normalized_master in normalized_search):
-                        print(f"    → タブ「{sheet.title}」で発見: {master_name}")
-                        return PaymentTerms(
-                            supplier_name=master_name,
-                            closing_day=str(row[closing_col]) if closing_col and len(row) > closing_col else "月末",
-                            payment_day=str(row[payment_col]) if payment_col and len(row) > payment_col else "",
-                            payment_method=str(row[method_col]) if method_col and len(row) > method_col else "",
-                        )
+                if matched:
+                    # マッチした行を取得
+                    for row in all_values[1:]:
+                        if len(row) > supplier_col and str(row[supplier_col]) == matched:
+                            print(f"    → タブ「{sheet.title}」で発見: {matched}")
+                            return PaymentTerms(
+                                supplier_name=matched,
+                                closing_day=str(row[closing_col]) if closing_col and len(row) > closing_col else "月末",
+                                payment_day=str(row[payment_col]) if payment_col and len(row) > payment_col else "",
+                                payment_method=str(row[method_col]) if method_col and len(row) > method_col else "",
+                            )
 
             print(f"    締め日マスター: 「{supplier_name}」が見つかりません")
             return None
@@ -771,17 +902,7 @@ class GoogleSheetsClient:
         shoumetsu_col = month_col + 2  # 消滅
         zandaka_col = month_col + 3  # 残高
 
-        # 既存値をパース
-        def parse_amount(value_str: str) -> int:
-            if not value_str:
-                return 0
-            cleaned = str(value_str).replace(',', '').replace(' ', '').replace('¥', '').replace('円', '')
-            try:
-                return int(float(cleaned))
-            except ValueError:
-                return 0
-
-        # 4. 海外輸入の場合は2行使用
+        # 4. 海外輸入の場合は2行使用（モジュールレベルの parse_amount を使用）
         if purchase_invoice.is_overseas:
             print(f"    海外輸入: 2行に記録します")
 
@@ -863,14 +984,12 @@ class GoogleSheetsClient:
             int: 会社名の行番号（1-indexed）
         """
         col_a_values = sheet.col_values(1)
-        normalized_search = normalize_company_name(company_name)
-
         # Row 4以降から検索（Row 1-3はヘッダー）
-        for i, cell_value in enumerate(col_a_values[3:], start=4):
-            normalized_cell = normalize_company_name(str(cell_value))
-            if normalized_search in normalized_cell or normalized_cell in normalized_search:
-                print(f"    会社 '{company_name}' を行 {i} で発見")
-                return i
+        found_row = _find_company_row(company_name, col_a_values, start_row=4)
+
+        if found_row is not None:
+            print(f"    会社 '{company_name}' を行 {found_row} で発見")
+            return found_row
 
         # 見つからない場合は新規行を追加
         new_row = len(col_a_values) + 1
