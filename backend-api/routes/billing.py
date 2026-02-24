@@ -55,6 +55,7 @@ class SaveBillingRequest(BaseModel):
     previous_billing: PreviousBillingRequest
     sales_person: str = ""
     request_id: str = ""
+    force_overwrite: bool = False
 
 
 class UpdatePaymentRequest(BaseModel):
@@ -146,6 +147,22 @@ async def save_billing(request: SaveBillingRequest):
                 total=note_req.total,
                 payment_received=note_req.payment_received,
             ))
+
+        # 重複チェック（force_overwrite でない場合のみ）
+        if not request.force_overwrite:
+            slip_numbers = [dn.slip_number for dn in delivery_notes if dn.slip_number]
+            existing = db.find_existing_slip_numbers(
+                company_name=company_name,
+                year_month=year_month_str,
+                slip_numbers=slip_numbers,
+            )
+            if existing:
+                return {
+                    "success": False,
+                    "duplicate_conflict": True,
+                    "existing_notes": existing,
+                    "message": "以下の伝票番号は既にDBに保存されています",
+                }
 
         # Layer 1: DB一括保存（単一トランザクション — 全件成功 or 全件ロールバック）
         saved_count = db.save_monthly_items_batch(

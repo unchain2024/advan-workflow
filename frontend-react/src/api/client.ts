@@ -6,6 +6,7 @@ import type {
   UpdatePaymentRequest,
   UpdatePaymentResponse,
   SaveBillingRequest,
+  SaveBillingResponse,
   CompanyConfig,
   RegenerateInvoiceRequest,
   RegenerateInvoiceResponse,
@@ -80,8 +81,8 @@ export const regenerateInvoice = async (
   return response.data;
 };
 
-export const saveBilling = async (data: SaveBillingRequest): Promise<{ success: boolean; message: string }> => {
-  const response = await apiClient.post<{ success: boolean; message: string }>('/save-billing', data);
+export const saveBilling = async (data: SaveBillingRequest): Promise<SaveBillingResponse> => {
+  const response = await apiClient.post<SaveBillingResponse>('/save-billing', data);
   return response.data;
 };
 

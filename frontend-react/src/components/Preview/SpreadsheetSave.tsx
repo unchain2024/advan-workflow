@@ -4,7 +4,7 @@ import { Message } from '../Common/Message';
 import { MetricCard } from '../Common/MetricCard';
 import { saveBilling, checkDiscrepancy } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
-import type { DeliveryNote, PreviousBilling } from '../../types';
+import type { DeliveryNote, PreviousBilling, ExistingNoteInfo } from '../../types';
 
 interface SpreadsheetSaveProps {
   allDeliveryNotes: DeliveryNote[];
@@ -36,6 +36,10 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(crypto.randomUUID());
 
+  // 重複確認ポップアップ
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+  const [duplicateNotes, setDuplicateNotes] = useState<ExistingNoteInfo[]>([]);
+
   // 表示用は累積値、書き込み用は個別値
   const displaySubtotal = cumulativeSubtotal ?? deliveryNote.subtotal;
   const displayTax = cumulativeTax ?? deliveryNote.tax;
@@ -48,12 +52,11 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
   const afterSales = existingSales + displaySubtotal;
   const afterTax = existingTax + displayTax;
 
-  const handleSave = async () => {
+  const doSave = async (forceOverwrite: boolean) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      // 全納品書を一括でシート + DB に保存（冪等性トークン付き）
       const notesToSend = allDeliveryNotes.length > 0 ? allDeliveryNotes : [deliveryNote];
       const response = await saveBilling({
         company_name: deliveryNote.company_name,
@@ -62,12 +65,21 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
         previous_billing: previousBilling,
         sales_person: salesPerson,
         request_id: requestIdRef.current,
+        force_overwrite: forceOverwrite,
       });
+
+      // 重複検出 → ポップアップ表示
+      if (response.duplicate_conflict && response.existing_notes) {
+        setDuplicateNotes(response.existing_notes);
+        setShowDuplicateDialog(true);
+        setIsLoading(false);
+        return;
+      }
 
       alert(response.message);
       onSaveComplete();
 
-      // スプレッドシート書き込み後に乖離チェックを再実行
+      // 乖離チェックを再実行
       try {
         const discResult = await checkDiscrepancy();
         setDiscrepancies(discResult.discrepancies);
@@ -81,8 +93,19 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
     }
   };
 
+  const handleSave = () => doSave(false);
+
+  const handleForceOverwrite = () => {
+    setShowDuplicateDialog(false);
+    doSave(true);
+  };
+
+  const handleCancelOverwrite = () => {
+    setShowDuplicateDialog(false);
+    setDuplicateNotes([]);
+  };
+
   const handleDownload = () => {
-    // PDFファイルをダウンロード
     const link = document.createElement('a');
     link.href = invoicePath;
     link.download = invoicePath.split('/').pop() || 'invoice.pdf';
@@ -96,10 +119,71 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
     <div className="mt-8">
       <div className="border-t-2 border-gray-200 mb-8"></div>
 
+      {/* 重複確認ポップアップ */}
+      {showDuplicateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-amber-700 mb-4">
+                この伝票番号は既に保存されています
+              </h3>
+
+              <p className="text-gray-600 mb-4">
+                以下のデータが既にDBに存在します。上書きしますか？
+              </p>
+
+              <div className="space-y-3 mb-6">
+                {duplicateNotes.map((note) => (
+                  <div
+                    key={note.slip_number}
+                    className="bg-amber-50 border border-amber-200 rounded-lg p-4"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="font-semibold text-gray-800">
+                        伝票番号: {note.slip_number}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        保存日時: {note.saved_at}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-700">
+                      <div>日付: {note.date}</div>
+                      <div>担当者: {note.sales_person || '—'}</div>
+                      <div>小計: ¥{note.subtotal.toLocaleString()}</div>
+                      <div>消費税: ¥{note.tax.toLocaleString()}</div>
+                      <div className="font-semibold">
+                        合計: ¥{note.total.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  onClick={handleForceOverwrite}
+                  variant="primary"
+                  loading={isLoading}
+                >
+                  上書き保存する
+                </Button>
+                <Button
+                  onClick={handleCancelOverwrite}
+                  variant="secondary"
+                  fullWidth
+                >
+                  キャンセル
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!isSaved ? (
         <>
           <h2 className="text-3xl font-semibold text-gray-700 mb-4">
-            📊 売上集計表への書き込み
+            売上集計表への書き込み
           </h2>
 
           <Message type="info" className="mb-6">
@@ -169,7 +253,7 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
             fullWidth
             loading={isLoading}
           >
-            📝 スプレッドシートに書き込む
+            スプレッドシートに書き込む
           </Button>
         </>
       ) : (
@@ -181,7 +265,7 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
           <div className="border-t-2 border-gray-200 my-8"></div>
 
           <h2 className="text-3xl font-semibold text-gray-700 mb-4">
-            📥 請求書PDFダウンロード
+            請求書PDFダウンロード
           </h2>
 
           <Button
@@ -189,7 +273,7 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
             variant="success"
             fullWidth
           >
-            📥 請求書PDFをダウンロード
+            請求書PDFをダウンロード
           </Button>
         </>
       )}

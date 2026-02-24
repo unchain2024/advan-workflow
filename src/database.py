@@ -248,6 +248,50 @@ class MonthlyItemsDB:
 
         return None
 
+    def find_existing_slip_numbers(
+        self,
+        company_name: str,
+        year_month: str,
+        slip_numbers: list[str],
+    ) -> list[dict]:
+        """指定したslip_numbersのうち、既にDBに存在するものを返す
+
+        Returns:
+            list[dict]: [{slip_number, date, subtotal, tax, total, sales_person, saved_at}, ...]
+        """
+        if not slip_numbers:
+            return []
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            result = self._find_invoice_id(cursor, year_month, company_name)
+            if not result:
+                return []
+
+            invoice_id, _ = result
+            placeholders = ",".join("?" for _ in slip_numbers)
+            cursor.execute(f"""
+                SELECT slip_number, date, subtotal, tax, total,
+                       sales_person, updated_at
+                FROM delivery_notes
+                WHERE monthly_invoice_id = ?
+                  AND slip_number IN ({placeholders})
+                ORDER BY slip_number
+            """, [invoice_id] + slip_numbers)
+
+            return [
+                {
+                    "slip_number": row["slip_number"],
+                    "date": row["date"],
+                    "subtotal": row["subtotal"],
+                    "tax": row["tax"],
+                    "total": row["total"],
+                    "sales_person": row["sales_person"],
+                    "saved_at": row["updated_at"],
+                }
+                for row in cursor.fetchall()
+            ]
+
     def check_request_id(self, request_id: str) -> bool:
         """冪等性トークンが既に処理済みかチェック
 

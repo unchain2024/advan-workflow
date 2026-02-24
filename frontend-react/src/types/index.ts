@@ -91,6 +91,25 @@ export interface SaveBillingRequest {
   previous_billing: PreviousBilling;
   sales_person?: string;
   request_id?: string;
+  force_overwrite?: boolean;
+}
+
+export interface ExistingNoteInfo {
+  slip_number: string;
+  date: string;
+  subtotal: number;
+  tax: number;
+  total: number;
+  sales_person: string;
+  saved_at: string;
+}
+
+export interface SaveBillingResponse {
+  success: boolean;
+  message: string;
+  saved_count?: number;
+  duplicate_conflict?: boolean;
+  existing_notes?: ExistingNoteInfo[];
 }
 
 export interface RegenerateInvoiceRequest {
