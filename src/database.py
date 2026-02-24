@@ -108,10 +108,27 @@ class MonthlyItemsDB:
                 ON delivery_items(delivery_note_id)
             """)
             # slip_number ユニークインデックス（同一invoice内で重複防止）
-            cursor.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_notes_slip_unique
-                ON delivery_notes(monthly_invoice_id, slip_number)
-            """)
+            # 既存の重複データを先にクリーンアップしてからインデックスを作成
+            try:
+                cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_notes_slip_unique
+                    ON delivery_notes(monthly_invoice_id, slip_number)
+                """)
+            except Exception:
+                # 既存データに重複がある場合、古い方を削除してリトライ
+                print("    重複slip_numberを検出、クリーンアップ中...")
+                cursor.execute("""
+                    DELETE FROM delivery_notes
+                    WHERE id NOT IN (
+                        SELECT MAX(id)
+                        FROM delivery_notes
+                        GROUP BY monthly_invoice_id, slip_number
+                    )
+                """)
+                cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_notes_slip_unique
+                    ON delivery_notes(monthly_invoice_id, slip_number)
+                """)
 
             # 旧テーブルからマイグレーション
             cursor.execute("""
