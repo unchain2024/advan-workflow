@@ -8,6 +8,7 @@ from contextlib import contextmanager
 
 from .config import DATABASE_PATH, DATA_DIR
 from .pdf_extractor import DeliveryNote, DeliveryItem
+from .purchase_extractor import PurchaseInvoice, PurchaseItem
 from .sheets_client import normalize_company_name, match_company_name
 
 
@@ -128,6 +129,82 @@ class MonthlyItemsDB:
                 cursor.execute("""
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_notes_slip_unique
                     ON delivery_notes(monthly_invoice_id, slip_number)
+                """)
+
+            # --- 仕入れ用テーブル ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS purchase_invoices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    year_month TEXT NOT NULL,
+                    company_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(year_month, company_name)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS purchase_notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    purchase_invoice_id INTEGER NOT NULL,
+                    slip_number TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    sales_person TEXT NOT NULL DEFAULT '',
+                    subtotal INTEGER NOT NULL,
+                    tax INTEGER NOT NULL,
+                    total INTEGER NOT NULL,
+                    is_taxable INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (purchase_invoice_id)
+                        REFERENCES purchase_invoices(id) ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS purchase_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    purchase_note_id INTEGER NOT NULL,
+                    product_code TEXT NOT NULL DEFAULT '',
+                    product_name TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    unit_price INTEGER NOT NULL,
+                    amount INTEGER NOT NULL,
+                    FOREIGN KEY (purchase_note_id)
+                        REFERENCES purchase_notes(id) ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_purchase_invoices_ym_company
+                ON purchase_invoices(year_month, company_name)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_purchase_notes_invoice_id
+                ON purchase_notes(purchase_invoice_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_purchase_items_note_id
+                ON purchase_items(purchase_note_id)
+            """)
+            try:
+                cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_notes_slip_unique
+                    ON purchase_notes(purchase_invoice_id, slip_number)
+                """)
+            except Exception:
+                print("    仕入れ重複slip_numberを検出、クリーンアップ中...")
+                cursor.execute("""
+                    DELETE FROM purchase_notes
+                    WHERE id NOT IN (
+                        SELECT MAX(id)
+                        FROM purchase_notes
+                        GROUP BY purchase_invoice_id, slip_number
+                    )
+                """)
+                cursor.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_notes_slip_unique
+                    ON purchase_notes(purchase_invoice_id, slip_number)
                 """)
 
             # 旧テーブルからマイグレーション
@@ -894,3 +971,346 @@ class MonthlyItemsDB:
                     ORDER BY sales_person
                 """)
             return [row["sales_person"] for row in cursor.fetchall()]
+
+    # ========================================
+    # 仕入れ用メソッド
+    # ========================================
+
+    def _find_purchase_invoice_id(
+        self, cursor, year_month: str, company_name: str,
+    ) -> Optional[tuple]:
+        """正規化した会社名で purchase_invoices レコードを検索
+
+        Returns:
+            (id, company_name) tuple、見つからない場合は None
+        """
+        cursor.execute("""
+            SELECT id, company_name FROM purchase_invoices
+            WHERE year_month = ? AND company_name = ?
+        """, (year_month, company_name))
+        row = cursor.fetchone()
+        if row:
+            return (row["id"], row["company_name"])
+
+        cursor.execute("""
+            SELECT id, company_name FROM purchase_invoices
+            WHERE year_month = ?
+        """, (year_month,))
+        rows = cursor.fetchall()
+
+        if not rows:
+            return None
+
+        db_names = [row["company_name"] for row in rows]
+        matched = match_company_name(company_name, db_names)
+
+        if matched:
+            for row in rows:
+                if row["company_name"] == matched:
+                    print(f"    仕入れ正規化マッチ: '{company_name}' → DB内 '{row['company_name']}'")
+                    return (row["id"], row["company_name"])
+
+        return None
+
+    def find_existing_purchase_slip_numbers(
+        self,
+        company_name: str,
+        year_month: str,
+        slip_numbers: list[str],
+    ) -> list[dict]:
+        """指定したslip_numbersのうち、仕入れDBに既に存在するものを返す"""
+        if not slip_numbers:
+            return []
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            result = self._find_purchase_invoice_id(cursor, year_month, company_name)
+            if not result:
+                return []
+
+            invoice_id, _ = result
+            placeholders = ",".join("?" for _ in slip_numbers)
+            cursor.execute(f"""
+                SELECT slip_number, date, subtotal, tax, total,
+                       sales_person, updated_at
+                FROM purchase_notes
+                WHERE purchase_invoice_id = ?
+                  AND slip_number IN ({placeholders})
+                ORDER BY slip_number
+            """, [invoice_id] + slip_numbers)
+
+            return [
+                {
+                    "slip_number": row["slip_number"],
+                    "date": row["date"],
+                    "subtotal": row["subtotal"],
+                    "tax": row["tax"],
+                    "total": row["total"],
+                    "sales_person": row["sales_person"],
+                    "saved_at": row["updated_at"],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def save_purchase_batch(
+        self,
+        company_name: str,
+        year_month: str,
+        purchase_invoices: list[PurchaseInvoice],
+        sales_person: str = "",
+        request_id: str = "",
+    ):
+        """複数の仕入れ納品書を単一トランザクションでDB保存"""
+        sales_person_clean = "".join(sales_person.split())
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            if request_id:
+                cursor.execute(
+                    "SELECT 1 FROM save_requests WHERE request_id = ?",
+                    (request_id,),
+                )
+                if cursor.fetchone():
+                    print(f"    冪等性トークン '{request_id}' は処理済み。スキップ。")
+                    return 0
+
+            result = self._find_purchase_invoice_id(cursor, year_month, company_name)
+
+            if result:
+                invoice_id, db_company_name = result
+                if db_company_name != company_name:
+                    cursor.execute("""
+                        UPDATE purchase_invoices SET company_name = ?, updated_at = ? WHERE id = ?
+                    """, (company_name, current_time, invoice_id))
+                else:
+                    cursor.execute("""
+                        UPDATE purchase_invoices SET updated_at = ? WHERE id = ?
+                    """, (current_time, invoice_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO purchase_invoices
+                    (year_month, company_name, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, (year_month, company_name, current_time, current_time))
+                invoice_id = cursor.lastrowid
+
+            saved_count = 0
+            for pi in purchase_invoices:
+                slip = pi.slip_number or ""
+                cursor.execute("""
+                    SELECT id FROM purchase_notes
+                    WHERE purchase_invoice_id = ? AND slip_number = ?
+                """, (invoice_id, slip))
+                existing_note = cursor.fetchone()
+
+                if existing_note:
+                    note_id = existing_note["id"]
+                    cursor.execute("""
+                        UPDATE purchase_notes
+                        SET date = ?, sales_person = ?,
+                            subtotal = ?, tax = ?, total = ?,
+                            is_taxable = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (
+                        pi.date or "",
+                        sales_person_clean,
+                        pi.subtotal,
+                        pi.tax,
+                        pi.total,
+                        1 if pi.is_taxable else 0,
+                        current_time,
+                        note_id,
+                    ))
+                    cursor.execute(
+                        "DELETE FROM purchase_items WHERE purchase_note_id = ?",
+                        (note_id,),
+                    )
+                else:
+                    cursor.execute("""
+                        INSERT INTO purchase_notes
+                        (purchase_invoice_id, slip_number, date, sales_person,
+                         subtotal, tax, total, is_taxable, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        invoice_id, slip,
+                        pi.date or "",
+                        sales_person_clean,
+                        pi.subtotal,
+                        pi.tax,
+                        pi.total,
+                        1 if pi.is_taxable else 0,
+                        current_time, current_time,
+                    ))
+                    note_id = cursor.lastrowid
+
+                for item in pi.items:
+                    cursor.execute("""
+                        INSERT INTO purchase_items
+                        (purchase_note_id, product_code, product_name,
+                         quantity, unit_price, amount)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        note_id,
+                        item.product_code or "",
+                        item.product_name,
+                        item.quantity,
+                        item.unit_price,
+                        item.amount,
+                    ))
+                saved_count += 1
+
+            if request_id:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO save_requests (request_id, created_at) VALUES (?, ?)",
+                    (request_id, current_time),
+                )
+
+            print(f"    仕入れDB一括保存: {company_name} ({year_month}) - {saved_count}件")
+            return saved_count
+
+    def get_purchase_items(
+        self,
+        company_name: str,
+        year_month: str,
+        sales_person: str = "",
+    ) -> list[dict]:
+        """仕入れDBから指定した会社・年月のデータを取得（担当者フィルター対応）"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            result = self._find_purchase_invoice_id(cursor, year_month, company_name)
+            if not result:
+                return []
+
+            invoice_id, _ = result
+
+            if sales_person:
+                cursor.execute("""
+                    SELECT id, slip_number, date, sales_person,
+                           subtotal, tax, total, is_taxable
+                    FROM purchase_notes
+                    WHERE purchase_invoice_id = ? AND sales_person = ?
+                    ORDER BY id
+                """, (invoice_id, sales_person))
+            else:
+                cursor.execute("""
+                    SELECT id, slip_number, date, sales_person,
+                           subtotal, tax, total, is_taxable
+                    FROM purchase_notes
+                    WHERE purchase_invoice_id = ?
+                    ORDER BY id
+                """, (invoice_id,))
+            note_rows = cursor.fetchall()
+
+            results = []
+            for note_row in note_rows:
+                cursor.execute("""
+                    SELECT product_code, product_name, quantity,
+                           unit_price, amount
+                    FROM purchase_items
+                    WHERE purchase_note_id = ?
+                    ORDER BY id
+                """, (note_row["id"],))
+                item_rows = cursor.fetchall()
+
+                items = [
+                    {
+                        "product_code": row["product_code"],
+                        "product_name": row["product_name"],
+                        "quantity": row["quantity"],
+                        "unit_price": row["unit_price"],
+                        "amount": row["amount"],
+                    }
+                    for row in item_rows
+                ]
+
+                results.append({
+                    "id": note_row["id"],
+                    "slip_number": note_row["slip_number"],
+                    "date": note_row["date"],
+                    "sales_person": note_row["sales_person"],
+                    "subtotal": note_row["subtotal"],
+                    "tax": note_row["tax"],
+                    "total": note_row["total"],
+                    "is_taxable": bool(note_row["is_taxable"]),
+                    "items": items,
+                })
+
+            return results
+
+    def get_purchase_companies(self) -> list[str]:
+        """仕入れDBに保存されているすべての会社名を取得"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT company_name
+                FROM purchase_invoices
+                ORDER BY company_name
+            """)
+            return [row["company_name"] for row in cursor.fetchall()]
+
+    def get_purchase_sales_persons(self, company_name: str = "") -> list[str]:
+        """仕入れDBに保存されている担当者名を取得"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if company_name:
+                cursor.execute("""
+                    SELECT DISTINCT pn.sales_person
+                    FROM purchase_notes pn
+                    JOIN purchase_invoices pi ON pi.id = pn.purchase_invoice_id
+                    WHERE pn.sales_person != '' AND pi.company_name = ?
+                    ORDER BY pn.sales_person
+                """, (company_name,))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT sales_person
+                    FROM purchase_notes
+                    WHERE sales_person != ''
+                    ORDER BY sales_person
+                """)
+            return [row["sales_person"] for row in cursor.fetchall()]
+
+    def get_purchase_notes_with_ids(
+        self, company_name: str, year_month: str
+    ) -> list[dict]:
+        """仕入れDBの納品書一覧をID付きで返す（編集画面用）"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            result = self._find_purchase_invoice_id(cursor, year_month, company_name)
+            if not result:
+                return []
+
+            invoice_id, _ = result
+            cursor.execute("""
+                SELECT id, slip_number, date, subtotal, tax, total, is_taxable
+                FROM purchase_notes
+                WHERE purchase_invoice_id = ?
+                ORDER BY id
+            """, (invoice_id,))
+            return [
+                {
+                    "id": row["id"],
+                    "slip_number": row["slip_number"],
+                    "date": row["date"],
+                    "subtotal": row["subtotal"],
+                    "tax": row["tax"],
+                    "total": row["total"],
+                    "is_taxable": bool(row["is_taxable"]),
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def update_purchase_note_amounts(
+        self, note_id: int, subtotal: int, tax: int, total: int
+    ):
+        """指定IDの purchase_note の金額を更新"""
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE purchase_notes
+                SET subtotal = ?, tax = ?, total = ?, updated_at = ?
+                WHERE id = ?
+            """, (subtotal, tax, total, current_time, note_id))

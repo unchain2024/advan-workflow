@@ -30,11 +30,6 @@ BILLING_SHEET_NAME = os.getenv("BILLING_SHEET_NAME", "請求管理")
 PURCHASE_SPREADSHEET_ID = os.getenv("PURCHASE_SPREADSHEET_ID", "")
 PURCHASE_SHEET_NAME = os.getenv("PURCHASE_SHEET_NAME", "仕入れ管理")
 
-# 締め日マスタースプレッドシート
-PURCHASE_TERMS_SPREADSHEET_ID = os.getenv("PURCHASE_TERMS_SPREADSHEET_ID", "")
-PURCHASE_TERMS_SHEET_NAME = os.getenv("PURCHASE_TERMS_SHEET_NAME", "締め日マスター")
-
-
 # 自社情報（JSON管理）
 def load_company_config() -> dict:
     """自社情報をJSONファイルから読み込む"""

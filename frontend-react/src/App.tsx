@@ -3,6 +3,8 @@ import { Layout } from './components/Layout/Layout';
 import { UploadPage } from './pages/UploadPage';
 import { MonthlyInvoicePage } from './pages/MonthlyInvoicePage';
 import { PurchasePage } from './pages/PurchasePage';
+import { PurchaseMonthlyPage } from './pages/PurchaseMonthlyPage';
+import { PurchasePaymentPage } from './pages/PurchasePaymentPage';
 import { PaymentPage } from './pages/PaymentPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ReconciliationPage } from './pages/ReconciliationPage';
@@ -20,6 +22,8 @@ function App() {
           <Route path="/" element={<UploadPage />} />
           <Route path="/monthly-invoice" element={<MonthlyInvoicePage />} />
           <Route path="/purchase" element={<PurchasePage />} />
+          <Route path="/purchase-monthly" element={<PurchaseMonthlyPage />} />
+          <Route path="/purchase-payment" element={<PurchasePaymentPage />} />
           <Route path="/payment" element={<PaymentPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/reconciliation" element={<ReconciliationPage />} />

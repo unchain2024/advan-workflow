@@ -28,9 +28,6 @@ from .config import (
     COMPANY_MASTER_SPREADSHEET_ID,
     CREDENTIALS_PATH,
     PURCHASE_SPREADSHEET_ID,
-    PURCHASE_SHEET_NAME,
-    PURCHASE_TERMS_SPREADSHEET_ID,
-    PURCHASE_TERMS_SHEET_NAME,
 )
 from .pdf_extractor import DeliveryNote
 
@@ -166,15 +163,6 @@ class PreviousBilling:
     sales_amount: int = 0  # 前月の売上額
     tax_amount: int = 0  # 前月の消費税額
     current_amount: int = 0  # 前月の今回御請求額
-
-
-@dataclass
-class PaymentTerms:
-    """支払条件（締め日マスター）"""
-    supplier_name: str  # 仕入先名
-    closing_day: str  # 締め日（「月末」または「20日」など）
-    payment_day: str  # 支払日（「翌月末」または「翌月10日」など）
-    payment_method: str = ""  # 支払方法（任意）
 
 
 def parse_amount(value) -> int:
@@ -794,206 +782,286 @@ class GoogleSheetsClient:
 
         return results
 
-    def get_payment_terms(self, supplier_name: str) -> Optional[PaymentTerms]:
-        """締め日マスターから支払条件を取得（全タブを検索）
+    def _get_purchase_sheet_by_year(self, year: int):
+        """年に基づいて仕入れスプレッドシートのシートを取得"""
+        if not PURCHASE_SPREADSHEET_ID:
+            raise ValueError("PURCHASE_SPREADSHEET_ID が設定されていません")
+        sheet_name = str(year)
+        return self.client.open_by_key(PURCHASE_SPREADSHEET_ID).worksheet(sheet_name)
 
-        Args:
-            supplier_name: 仕入先名
+    def _find_purchase_section_info(self, col_a_values: list, company_row: int) -> dict:
+        """会社名が見つかった行がどのセクションに属するかを判定
+
+        セクション構造:
+        - Row 4-75: 課税仕入れ（2行/社: 上=非課税, 下=課税）
+        - Row 76: 課税仕入れ合計
+        - Row 78: 非課税仕入ヘッダー
+        - Row 79-95: 非課税仕入（1行/社）
+        - Row 96: 非課税合計金額
+        - Row 99: 課税事業者ヘッダー
+        - Row 100-173: 課税事業者（2行/社: 上=非課税, 下=課税）
+        - Row 174: 課税外注合計
+        - Row 176: 非課税検品ヘッダー
+        - Row 177-181: 非課税検品（1行/社）
+        - Row 182: 非課税合計金額
 
         Returns:
-            PaymentTerms: 支払条件、見つからない場合はNone
+            dict: {"type": "2row" or "1row", "row": int}
         """
-        if not PURCHASE_TERMS_SPREADSHEET_ID:
-            print("    警告: PURCHASE_TERMS_SPREADSHEET_ID が設定されていません")
-            return None
+        # セクション境界を特定するためにColumn Aを走査
+        section_boundaries = []
+        for i, val in enumerate(col_a_values):
+            row_num = i + 1  # 1-indexed
+            val_str = str(val).strip()
+            if "課税仕入れ合計" in val_str:
+                section_boundaries.append({"row": row_num, "marker": "課税仕入れ合計", "type": "2row_end"})
+            elif "非課税仕入" in val_str and "合計" not in val_str and "検品" not in val_str:
+                section_boundaries.append({"row": row_num, "marker": "非課税仕入", "type": "1row_start"})
+            elif "課税事業者" in val_str:
+                section_boundaries.append({"row": row_num, "marker": "課税事業者", "type": "2row_start"})
+            elif "課税外注合計" in val_str:
+                section_boundaries.append({"row": row_num, "marker": "課税外注合計", "type": "2row_end"})
+            elif "非課税検品" in val_str:
+                section_boundaries.append({"row": row_num, "marker": "非課税検品", "type": "1row_start"})
+            elif val_str == "非課税合計金額":
+                section_boundaries.append({"row": row_num, "marker": "非課税合計金額", "type": "1row_end"})
 
-        try:
-            spreadsheet = self.client.open_by_key(PURCHASE_TERMS_SPREADSHEET_ID)
-            worksheets = spreadsheet.worksheets()
+        # company_rowがどのセクションに属するか判定
+        # デフォルト: 最初のセクション（課税仕入れ = 2行）
+        section_type = "2row"
 
-            for sheet in worksheets:
-                print(f"    締め日マスター検索中: タブ「{sheet.title}」")
-                all_values = sheet.get_all_values()
+        for boundary in sorted(section_boundaries, key=lambda b: b["row"]):
+            if boundary["row"] > company_row:
+                # この境界より前のセクションに属する
+                break
+            if boundary["type"] == "1row_start":
+                section_type = "1row"
+            elif boundary["type"] == "2row_start":
+                section_type = "2row"
+            elif boundary["type"] == "2row_end":
+                section_type = "1row"  # 次のセクションへの遷移
+            elif boundary["type"] == "1row_end":
+                section_type = "2row"  # 次のセクションへの遷移
 
-                if len(all_values) < 2:
-                    continue
-
-                headers = all_values[0]
-
-                supplier_col = None
-                closing_col = None
-                payment_col = None
-                method_col = None
-
-                for i, header in enumerate(headers):
-                    if "仕入先名" in str(header):
-                        supplier_col = i
-                    elif "締め日" in str(header):
-                        closing_col = i
-                    elif "支払日" in str(header):
-                        payment_col = i
-                    elif "支払方法" in str(header):
-                        method_col = i
-
-                if supplier_col is None:
-                    continue
-
-                # 全仕入先名を集めて match_company_name で最適マッチ
-                supplier_names = [
-                    str(row[supplier_col]) for row in all_values[1:]
-                    if len(row) > supplier_col
-                ]
-                matched = match_company_name(supplier_name, supplier_names)
-
-                if matched:
-                    # マッチした行を取得
-                    for row in all_values[1:]:
-                        if len(row) > supplier_col and str(row[supplier_col]) == matched:
-                            print(f"    → タブ「{sheet.title}」で発見: {matched}")
-                            return PaymentTerms(
-                                supplier_name=matched,
-                                closing_day=str(row[closing_col]) if closing_col and len(row) > closing_col else "月末",
-                                payment_day=str(row[payment_col]) if payment_col and len(row) > payment_col else "",
-                                payment_method=str(row[method_col]) if method_col and len(row) > method_col else "",
-                            )
-
-            print(f"    締め日マスター: 「{supplier_name}」が見つかりません")
-            return None
-
-        except Exception as e:
-            print(f"    締め日マスター読み取りエラー: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        return {"type": section_type, "row": company_row}
 
     def save_purchase_record(
         self,
         supplier_name: str,
         target_year_month: str,
-        purchase_invoice,  # PurchaseInvoice型（循環importを避けるため型ヒントなし）
+        purchase_invoice,  # PurchaseInvoice（循環importを避けるため型ヒントなし）
     ):
-        """仕入れスプレッドシートにデータを書き込み
+        """仕入れスプレッドシートにデータを書き込み（セクション構造対応）
 
-        Args:
-            supplier_name: 仕入先名
-            target_year_month: 記入対象年月（YYYY年M月形式）
-            purchase_invoice: 仕入れ納品書データ（PurchaseInvoice）
+        セクション構造に基づいて書き込み先を判定:
+        - 2行セクション（課税仕入れ / 課税事業者）:
+          - is_taxable=False → 上の行（会社名行）に加算、消費税=0
+          - is_taxable=True  → 下の行（会社名行+1）に加算、消費税=subtotal×10%
+        - 1行セクション（非課税仕入 / 非課税検品）:
+          - 常に1行に加算、消費税=0
         """
         if not PURCHASE_SPREADSHEET_ID:
             raise ValueError("PURCHASE_SPREADSHEET_ID が設定されていません")
 
-        sheet = self.client.open_by_key(PURCHASE_SPREADSHEET_ID).worksheet(
-            PURCHASE_SHEET_NAME
-        )
+        year_match = re.match(r'(\d{4})', target_year_month)
+        target_year = int(year_match.group(1)) if year_match else datetime.now().year
+        sheet = self._get_purchase_sheet_by_year(target_year)
 
         # 1. Row 2から年月列を検索
         row2_values = sheet.row_values(2)
         month_col = self._find_month_column_in_row(row2_values, target_year_month)
 
         if month_col is None:
-            raise ValueError(f"年月 '{target_year_month}' がスプレッドシートに見つかりません")
+            raise ValueError(f"年月 '{target_year_month}' が仕入れスプレッドシートに見つかりません")
 
-        # 2. 会社名の行を検索（なければ追加）
-        company_row = self._find_or_create_company_row(sheet, supplier_name)
+        # 2. Column Aで会社名を検索
+        col_a_values = sheet.col_values(1)
+        company_row = _find_company_row(supplier_name, col_a_values, start_row=4)
 
-        # 3. 各列の位置を計算
-        hassei_col = month_col  # 発生
-        tax_col = month_col + 1  # 消費税
-        shoumetsu_col = month_col + 2  # 消滅
-        zandaka_col = month_col + 3  # 残高
+        if company_row is None:
+            raise ValueError(
+                f"仕入先 '{supplier_name}' が仕入れスプレッドシートに見つかりません。"
+                f"シートに仕入先名を事前登録してください。"
+            )
 
-        # 4. 海外輸入の場合は2行使用（モジュールレベルの parse_amount を使用）
-        if purchase_invoice.is_overseas:
-            print(f"    海外輸入: 2行に記録します")
+        print(f"    仕入先 '{supplier_name}' を行 {company_row} で発見")
 
-            # 1行目: 関税なし（税抜金額）
-            amount_no_duty = purchase_invoice.subtotal
-            tax_no_duty = int(amount_no_duty * 0.10)
+        # 3. セクション判定
+        section_info = self._find_purchase_section_info(col_a_values, company_row)
+        section_type = section_info["type"]
+        print(f"    セクション: {section_type}")
 
-            # 2行目: 関税あり（税抜金額 + 関税）
-            amount_with_duty = purchase_invoice.subtotal + purchase_invoice.customs_duty
-            tax_with_duty = int(amount_with_duty * 0.10)
+        # 4. 書き込み行を決定
+        hassei_col = month_col      # 発生
+        tax_col = month_col + 1     # 消費税
+        zandaka_col = month_col + 3 # 残高
 
-            # 1行目を更新
-            current_hassei_1 = parse_amount(sheet.cell(company_row, hassei_col).value or "")
-            current_tax_1 = parse_amount(sheet.cell(company_row, tax_col).value or "")
-            new_hassei_1 = current_hassei_1 + amount_no_duty
-            new_tax_1 = current_tax_1 + tax_no_duty
+        is_taxable = getattr(purchase_invoice, 'is_taxable', True)
 
-            sheet.update_cell(company_row, hassei_col, new_hassei_1)
-            sheet.update_cell(company_row, tax_col, new_tax_1)
+        from gspread.utils import ValueRenderOption, rowcol_to_a1
 
-            print(f"    1行目（行{company_row}）: 発生 ¥{new_hassei_1:,}, 消費税 ¥{new_tax_1:,}")
-
-            # 2行目を更新（次の行）
-            company_row_2 = company_row + 1
-
-            # 2行目のA列（会社名）に同じ会社名を記入
-            current_company_name = sheet.cell(company_row_2, 1).value or ""
-            if not current_company_name or normalize_company_name(current_company_name) != normalize_company_name(supplier_name):
-                sheet.update_cell(company_row_2, 1, supplier_name)
-
-            current_hassei_2 = parse_amount(sheet.cell(company_row_2, hassei_col).value or "")
-            current_tax_2 = parse_amount(sheet.cell(company_row_2, tax_col).value or "")
-            new_hassei_2 = current_hassei_2 + amount_with_duty
-            new_tax_2 = current_tax_2 + tax_with_duty
-
-            sheet.update_cell(company_row_2, hassei_col, new_hassei_2)
-            sheet.update_cell(company_row_2, tax_col, new_tax_2)
-
-            print(f"    2行目（行{company_row_2}）: 発生 ¥{new_hassei_2:,}, 消費税 ¥{new_tax_2:,}")
-
+        if section_type == "2row":
+            if is_taxable:
+                # 課税 → 下の行（会社名行+1）
+                target_row = company_row + 1
+                print(f"    課税仕入れ → 下の行（行{target_row}）に加算")
+            else:
+                # 非課税 → 上の行（会社名行）
+                target_row = company_row
+                print(f"    非課税仕入れ → 上の行（行{target_row}）に加算")
         else:
-            # 国内仕入れ: 1行のみ
-            print(f"    国内仕入れ: 1行に記録します")
+            # 1行セクション → そのまま
+            target_row = company_row
+            print(f"    1行セクション → 行{target_row}に加算")
 
-            current_hassei = parse_amount(sheet.cell(company_row, hassei_col).value or "")
-            current_tax = parse_amount(sheet.cell(company_row, tax_col).value or "")
+        # 5. 現在値を読み取り加算
+        hassei_raw = sheet.get(
+            rowcol_to_a1(target_row, hassei_col),
+            value_render_option=ValueRenderOption.unformatted,
+        )
+        tax_raw = sheet.get(
+            rowcol_to_a1(target_row, tax_col),
+            value_render_option=ValueRenderOption.unformatted,
+        )
+        zandaka_raw = sheet.get(
+            rowcol_to_a1(target_row, zandaka_col),
+            value_render_option=ValueRenderOption.unformatted,
+        )
+        current_hassei = parse_amount(
+            hassei_raw[0][0] if hassei_raw and hassei_raw[0] else 0
+        )
+        current_tax = parse_amount(
+            tax_raw[0][0] if tax_raw and tax_raw[0] else 0
+        )
+        current_zandaka = parse_amount(
+            zandaka_raw[0][0] if zandaka_raw and zandaka_raw[0] else 0
+        )
 
-            new_hassei = current_hassei + purchase_invoice.subtotal
-            new_tax = current_tax + purchase_invoice.tax
+        new_hassei = current_hassei + purchase_invoice.subtotal
+        new_tax = current_tax + purchase_invoice.tax
+        new_zandaka = current_zandaka + purchase_invoice.subtotal + purchase_invoice.tax
 
-            sheet.update_cell(company_row, hassei_col, new_hassei)
-            sheet.update_cell(company_row, tax_col, new_tax)
+        print(f"    既存: 発生 ¥{current_hassei:,}, 消費税 ¥{current_tax:,}, 残高 ¥{current_zandaka:,}")
+        print(f"    追加: 発生 ¥{purchase_invoice.subtotal:,}, 消費税 ¥{purchase_invoice.tax:,}")
+        print(f"    合計: 発生 ¥{new_hassei:,}, 消費税 ¥{new_tax:,}, 残高 ¥{new_zandaka:,}")
 
-            print(f"    更新（行{company_row}）: 発生 ¥{new_hassei:,}, 消費税 ¥{new_tax:,}")
+        sheet.update_cell(target_row, hassei_col, new_hassei)
+        sheet.update_cell(target_row, tax_col, new_tax)
+        sheet.update_cell(target_row, zandaka_col, new_zandaka)
+
+    def update_purchase_payment(
+        self,
+        company_name: str,
+        year_month: str,
+        payment_amount: int,
+        add_mode: bool = False,
+    ) -> dict:
+        """仕入れスプレッドシートの消滅列を更新"""
+        year_match = re.match(r'(\d{4})', year_month)
+        target_year = int(year_match.group(1)) if year_match else datetime.now().year
+        sheet = self._get_purchase_sheet_by_year(target_year)
+
+        # 年月列を検索
+        row2_values = sheet.row_values(2)
+        month_col = self._find_month_column_in_row(row2_values, year_month)
+        if month_col is None:
+            raise ValueError(f"年月 '{year_month}' が見つかりません")
+
+        # 会社名の行を検索
+        col_a_values = sheet.col_values(1)
+        company_row = _find_company_row(company_name, col_a_values, start_row=4)
+        if company_row is None:
+            raise ValueError(f"仕入先 '{company_name}' が見つかりません")
+
+        # 消滅列 = 年月列 + 2
+        shoumetsu_col = month_col + 2
+
+        current_value = parse_amount(sheet.cell(company_row, shoumetsu_col).value or "")
+
+        if add_mode:
+            new_value = current_value + payment_amount
+        else:
+            new_value = payment_amount
+
+        sheet.update_cell(company_row, shoumetsu_col, new_value)
+
+        return {
+            "previous_value": current_value,
+            "new_value": new_value,
+        }
+
+    def get_purchase_companies_and_months(self) -> dict:
+        """仕入れスプレッドシートから会社リストと年月リストを取得"""
+        target_year = datetime.now().year
+        sheet = self._get_purchase_sheet_by_year(target_year)
+
+        col_a = sheet.col_values(1)
+        companies_all = [c for c in col_a[3:] if c]  # Row 4以降
+
+        seen_companies = set()
+        companies = []
+        for c in companies_all:
+            c_stripped = c.strip()
+            if c_stripped and c_stripped not in seen_companies:
+                # セクション区切りの行を除外
+                skip_keywords = ["合計", "非課税仕入", "課税事業者", "非課税検品"]
+                if not any(kw in c_stripped for kw in skip_keywords):
+                    seen_companies.add(c_stripped)
+                    companies.append(c_stripped)
+
+        row2 = sheet.row_values(2)
+        year_months_all = [ym for ym in row2 if "年" in str(ym) and "月" in str(ym)]
+
+        seen = set()
+        year_months = []
+        for ym in year_months_all:
+            if ym not in seen:
+                seen.add(ym)
+                year_months.append(ym)
+
+        return {
+            "companies": companies,
+            "year_months": year_months,
+        }
+
+    def get_purchase_table(self) -> dict:
+        """仕入れスプレッドシートの全データを取得"""
+        target_year = datetime.now().year
+        sheet = self._get_purchase_sheet_by_year(target_year)
+
+        data = sheet.get_all_values()
+        if not data or len(data) == 0:
+            return {"headers": [], "data": []}
+
+        headers = data[0]
+        rows = data[1:]
+
+        return {"headers": headers, "data": rows}
+
+    def get_canonical_purchase_company_name(
+        self, company_name: str, year: Optional[int] = None
+    ) -> Optional[str]:
+        """仕入れスプレッドシートから正規の会社名を取得"""
+        try:
+            if year is None:
+                year = datetime.now().year
+
+            sheet = self._get_purchase_sheet_by_year(year)
+            col_a_values = sheet.col_values(1)
+            candidates = [v for v in col_a_values[3:] if v]  # Row 4以降
+
+            canonical = match_company_name(company_name, candidates)
+            if canonical:
+                print(f"    仕入れ正規会社名取得: '{company_name}' → '{canonical}'")
+            return canonical
+        except Exception as e:
+            print(f"    仕入れ正規会社名の取得エラー: {e}")
+            return None
 
     def _find_month_column_in_row(self, row_values: list, target_year_month: str) -> Optional[int]:
-        """行データから年月の列を検索
-
-        Args:
-            row_values: 行のセル値リスト
-            target_year_month: 検索する年月（YYYY年M月形式）
-
-        Returns:
-            int: 列番号（1-indexed）、見つからない場合はNone
-        """
+        """行データから年月の列を検索"""
         for i, cell_value in enumerate(row_values):
             if target_year_month in str(cell_value):
                 return i + 1  # gspreadは1-indexed
         return None
-
-    def _find_or_create_company_row(self, sheet, company_name: str) -> int:
-        """会社名の行を検索、なければ追加
-
-        Args:
-            sheet: gspreadのWorksheetオブジェクト
-            company_name: 会社名
-
-        Returns:
-            int: 会社名の行番号（1-indexed）
-        """
-        col_a_values = sheet.col_values(1)
-        # Row 4以降から検索（Row 1-3はヘッダー）
-        found_row = _find_company_row(company_name, col_a_values, start_row=4)
-
-        if found_row is not None:
-            print(f"    会社 '{company_name}' を行 {found_row} で発見")
-            return found_row
-
-        # 見つからない場合は新規行を追加
-        new_row = len(col_a_values) + 1
-        sheet.update_cell(new_row, 1, company_name)
-        print(f"    会社 '{company_name}' を行 {new_row} に追加しました")
-        return new_row
 
