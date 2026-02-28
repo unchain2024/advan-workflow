@@ -11,8 +11,14 @@ import type {
   RegenerateInvoiceRequest,
   RegenerateInvoiceResponse,
   ProcessPurchasePDFResponse,
-  SavePurchaseRecordRequest,
-  SavePurchaseRecordResponse,
+  SavePurchaseRequest,
+  SavePurchaseResponse,
+  UpdatePurchasePaymentRequest,
+  UpdatePurchasePaymentResponse,
+  PurchaseCompaniesAndMonthsResponse,
+  PurchaseTableResponse,
+  PurchaseMonthlyItem,
+  PurchaseDeliveryNote,
   GenerateMonthlyInvoiceResponse,
   CheckDiscrepancyResponse,
   DBDeliveryNote,
@@ -122,7 +128,7 @@ export const processPurchasePDF = async (
   formData.append('file', file);
 
   if (onProgress) {
-    onProgress(10, '📄 PDFからデータを抽出中...');
+    onProgress(10, 'PDFからデータを抽出中...');
   }
 
   try {
@@ -133,7 +139,7 @@ export const processPurchasePDF = async (
     });
 
     if (onProgress) {
-      onProgress(100, '✅ 処理完了');
+      onProgress(100, '処理完了');
     }
 
     return response.data;
@@ -142,10 +148,73 @@ export const processPurchasePDF = async (
   }
 };
 
-export const savePurchaseRecord = async (
-  data: SavePurchaseRecordRequest
-): Promise<SavePurchaseRecordResponse> => {
-  const response = await apiClient.post<SavePurchaseRecordResponse>('/save-purchase-record', data);
+export const savePurchase = async (
+  data: SavePurchaseRequest
+): Promise<SavePurchaseResponse> => {
+  const response = await apiClient.post<SavePurchaseResponse>('/save-purchase', data);
+  return response.data;
+};
+
+export const updatePurchasePayment = async (
+  data: UpdatePurchasePaymentRequest
+): Promise<UpdatePurchasePaymentResponse> => {
+  const response = await apiClient.post<UpdatePurchasePaymentResponse>('/update-purchase-payment', data);
+  return response.data;
+};
+
+export const getPurchaseCompaniesAndMonths = async (): Promise<PurchaseCompaniesAndMonthsResponse> => {
+  const response = await apiClient.get<PurchaseCompaniesAndMonthsResponse>('/purchase-companies-and-months');
+  return response.data;
+};
+
+export const getPurchaseDBCompanies = async (): Promise<{ companies: string[] }> => {
+  const response = await apiClient.get<{ companies: string[] }>('/purchase-db-companies');
+  return response.data;
+};
+
+export const getPurchaseDBSalesPersons = async (companyName?: string): Promise<{ sales_persons: string[] }> => {
+  const params = companyName ? { company_name: companyName } : {};
+  const response = await apiClient.get<{ sales_persons: string[] }>('/purchase-db-sales-persons', { params });
+  return response.data;
+};
+
+export const getPurchaseMonthly = async (
+  companyName: string,
+  yearMonth: string,
+  salesPerson: string = ''
+): Promise<{ items: PurchaseMonthlyItem[] }> => {
+  const response = await apiClient.get<{ items: PurchaseMonthlyItem[] }>('/purchase-monthly', {
+    params: { company_name: companyName, year_month: yearMonth, sales_person: salesPerson },
+  });
+  return response.data;
+};
+
+export const getPurchaseTable = async (): Promise<PurchaseTableResponse> => {
+  const response = await apiClient.get<PurchaseTableResponse>('/purchase-table');
+  return response.data;
+};
+
+export const getPurchaseDeliveryNotes = async (
+  companyName: string,
+  yearMonth: string
+): Promise<{ notes: PurchaseDeliveryNote[] }> => {
+  const response = await apiClient.get<{ notes: PurchaseDeliveryNote[] }>('/purchase-delivery-notes', {
+    params: { company_name: companyName, year_month: yearMonth },
+  });
+  return response.data;
+};
+
+export const updatePurchaseDeliveryNote = async (
+  id: number,
+  subtotal: number,
+  tax: number,
+  total: number
+): Promise<{ success: boolean }> => {
+  const response = await apiClient.put<{ success: boolean }>(`/purchase-delivery-notes/${id}`, {
+    subtotal,
+    tax,
+    total,
+  });
   return response.data;
 };
 

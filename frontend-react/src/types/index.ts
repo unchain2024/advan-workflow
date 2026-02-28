@@ -150,7 +150,6 @@ export interface DBDeliveryNote {
 
 // 仕入れ関連の型定義
 export interface PurchaseItem {
-  slip_number: string;
   product_code: string;
   product_name: string;
   quantity: number;
@@ -161,41 +160,102 @@ export interface PurchaseItem {
 export interface PurchaseInvoice {
   date: string;
   supplier_name: string;
-  supplier_address: string;
   slip_number: string;
   items: PurchaseItem[];
   subtotal: number;
   tax: number;
   total: number;
-  customs_duty: number;
-  is_overseas: boolean;
-}
-
-export interface PaymentTerms {
-  supplier_name: string;
-  closing_day: string;
-  payment_day: string;
-  payment_method: string;
+  is_taxable: boolean;
 }
 
 export interface ProcessPurchasePDFResponse {
-  purchase_invoice: PurchaseInvoice;
-  payment_terms: PaymentTerms | null;
-  target_year_month: string;
-  is_overseas: boolean;
+  purchase_invoices: PurchaseInvoice[];
   records_count: number;
   purchase_pdf_url: string;
 }
 
-export interface SavePurchaseRecordRequest {
-  supplier_name: string;
-  target_year_month: string;
-  purchase_invoice: PurchaseInvoice;
+export interface PurchaseNoteRequest {
+  date: string;
+  slip_number: string;
+  items: PurchaseItem[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  is_taxable: boolean;
 }
 
-export interface SavePurchaseRecordResponse {
+export interface SavePurchaseRequest {
+  company_name: string;
+  year_month: string;
+  purchase_notes: PurchaseNoteRequest[];
+  sales_person: string;
+  request_id: string;
+  force_overwrite: boolean;
+}
+
+export interface ExistingPurchaseNoteInfo {
+  slip_number: string;
+  date: string;
+  subtotal: number;
+  tax: number;
+  total: number;
+  sales_person: string;
+  saved_at: string;
+}
+
+export interface SavePurchaseResponse {
   success: boolean;
   message: string;
+  saved_count?: number;
+  duplicate_conflict?: boolean;
+  existing_notes?: ExistingPurchaseNoteInfo[];
+  warning?: string;
+}
+
+export interface UpdatePurchasePaymentRequest {
+  company_name: string;
+  year_month: string;
+  payment_amount: number;
+  add_mode: boolean;
+}
+
+export interface UpdatePurchasePaymentResponse {
+  success: boolean;
+  message: string;
+  previous_value: number;
+  new_value: number;
+}
+
+export interface PurchaseCompaniesAndMonthsResponse {
+  companies: string[];
+  year_months: string[];
+}
+
+export interface PurchaseTableResponse {
+  headers: string[];
+  data: string[][];
+}
+
+export interface PurchaseMonthlyItem {
+  id: number;
+  slip_number: string;
+  date: string;
+  sales_person: string;
+  subtotal: number;
+  tax: number;
+  total: number;
+  is_taxable: boolean;
+  items: PurchaseItem[];
+}
+
+export interface PurchaseDeliveryNote {
+  id: number;
+  slip_number: string;
+  date: string;
+  subtotal: number;
+  tax: number;
+  total: number;
+  is_taxable: boolean;
 }
 
 // 月次請求書生成関連の型定義
