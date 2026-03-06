@@ -66,14 +66,21 @@ def match_company_name(search_name: str, candidates: list[str]) -> Optional[str]
     """正規化した会社名で最適な候補を選択
 
     マッチング優先度:
-    1. 正規化後の完全一致
-    2. 部分一致がある場合、正規化名の長さが最も近いもの（最短差）
+    1. 正規化後の完全一致（1件のみ）
+    2. 部分一致（1件のみ）
+
+    完全一致・部分一致いずれも複数候補がある場合は曖昧と判断し
+    None を返す（ユーザーに選択させる）。
 
     例:
-    - "アダストリア" vs ["アダストリア", "アダストリアHARE事業部"]
-      → "アダストリア"（完全一致）
-    - "アダストリアHARE事業部" vs ["アダストリア", "アダストリアHARE事業部"]
-      → "アダストリアHARE事業部"（完全一致）
+    - "アダストリア" vs ["アダストリア", "アダストリアサンプル"]
+      → "アダストリア"（完全一致1件）
+    - "アダストリアサンプル" vs ["アダストリア", "アダストリアサンプル"]
+      → "アダストリアサンプル"（完全一致1件）
+    - "アダストリアサンプル" vs ["アダストリア"]（サンプルが未登録）
+      → None（部分一致1件だが差が大きい → ユーザー選択）
+    - "アダストリア" vs ["アダストリア", "アダストリア（サンプル）"]
+      → None（正規化後に同名の候補が複数 → ユーザー選択）
 
     Args:
         search_name: 検索する会社名（正規化前）
@@ -86,17 +93,26 @@ def match_company_name(search_name: str, candidates: list[str]) -> Optional[str]
     if not normalized_search:
         return None
 
-    # 1. 完全一致を優先
+    # 1. 完全一致を優先（複数マッチした場合は曖昧なので None）
+    exact_matches = []
     for candidate in candidates:
         if not candidate:
             continue
         normalized_candidate = normalize_company_name(str(candidate))
         if normalized_candidate and normalized_search == normalized_candidate:
-            return str(candidate).strip()
+            exact_matches.append(str(candidate).strip())
 
-    # 2. 部分一致フォールバック（長さが最も近いものを選択）
-    best_match: Optional[str] = None
-    best_diff = float('inf')
+    # 重複除去（同じ会社名が複数行にある場合）
+    unique_exact = list(dict.fromkeys(exact_matches))
+    if len(unique_exact) == 1:
+        return unique_exact[0]
+    elif len(unique_exact) >= 2:
+        # 正規化後に同じ名前になる異なる会社が複数 → 曖昧なので None
+        return None
+
+    # 2. 部分一致フォールバック
+    #    候補が複数ある場合は曖昧なので None を返し、ユーザーに選択させる
+    partial_matches: list[tuple[str, int]] = []  # (元の候補名, 長さの差)
 
     for candidate in candidates:
         if not candidate:
@@ -107,11 +123,20 @@ def match_company_name(search_name: str, candidates: list[str]) -> Optional[str]
 
         if normalized_search in normalized_candidate or normalized_candidate in normalized_search:
             diff = abs(len(normalized_search) - len(normalized_candidate))
-            if diff < best_diff:
-                best_diff = diff
-                best_match = str(candidate).strip()
+            partial_matches.append((str(candidate).strip(), diff))
 
-    return best_match
+    if len(partial_matches) == 1:
+        # 差が小さい場合のみ自動マッチ（例: "HARE" vs "HARE事業部" は OK、
+        # "アダストリア" vs "アダストリアサンプル" は差が大きいので NG）
+        if partial_matches[0][1] <= 2:
+            return partial_matches[0][0]
+        else:
+            return None
+    elif len(partial_matches) >= 2:
+        # 複数の部分一致候補がある → 曖昧なので None（ユーザー選択へ）
+        return None
+
+    return None
 
 
 def _find_company_row(
