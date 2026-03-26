@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '../components/Common/Button';
 import { Message } from '../components/Common/Message';
 import { Spinner } from '../components/Common/Spinner';
 import { MetricCard } from '../components/Common/MetricCard';
 import { generateMonthlyInvoice, getDBCompanies, getDBSalesPersons } from '../api/client';
 import type { GenerateMonthlyInvoiceResponse } from '../types';
+
+const PAGES_PER_BATCH = 5;
 
 export const MonthlyInvoicePage: React.FC = () => {
   const [companyName, setCompanyName] = useState('');
@@ -18,6 +20,11 @@ export const MonthlyInvoicePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [invoiceImages, setInvoiceImages] = useState<string[]>([]);
   const [imagesLoading, setImagesLoading] = useState(false);
+  const [totalPages, setTotalPages] = useState(0);
+  const [loadedPageCount, setLoadedPageCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const pdfFilenameRef = useRef<string | null>(null);
 
   // ページ読み込み時にDB内の会社名リストを取得
   useEffect(() => {
@@ -61,17 +68,23 @@ export const MonthlyInvoicePage: React.FC = () => {
       const response = await generateMonthlyInvoice(companyName, yearMonth, salesPerson);
       setResult(response);
 
-      // PDFを画像に変換
+      // PDFを画像に変換（最初のバッチ）
       setImagesLoading(true);
       setInvoiceImages([]);
+      setTotalPages(0);
+      setLoadedPageCount(0);
+      setCurrentPage(0);
       try {
         const pdfUrl = response.invoice_url.split('?')[0];
         const filename = pdfUrl.split('/').pop();
         if (filename) {
-          const imgRes = await fetch(`/api/pdf-to-images/${encodeURIComponent(filename)}`);
+          pdfFilenameRef.current = filename;
+          const imgRes = await fetch(`/api/pdf-to-images/${encodeURIComponent(filename)}?start_page=1&end_page=${PAGES_PER_BATCH}`);
           if (imgRes.ok) {
             const imgData = await imgRes.json();
             setInvoiceImages(imgData.images);
+            setTotalPages(imgData.num_pages);
+            setLoadedPageCount(imgData.images.length);
           }
         }
       } catch {
@@ -91,6 +104,37 @@ export const MonthlyInvoicePage: React.FC = () => {
       setIsLoading(false);
     }
   };
+
+  // 追加ページ読み込み
+  const loadMorePages = useCallback(async () => {
+    if (loadingMore || loadedPageCount >= totalPages || !pdfFilenameRef.current) return;
+    setLoadingMore(true);
+    try {
+      const startPage = loadedPageCount + 1;
+      const endPage = Math.min(loadedPageCount + PAGES_PER_BATCH, totalPages);
+      const imgRes = await fetch(
+        `/api/pdf-to-images/${encodeURIComponent(pdfFilenameRef.current)}?start_page=${startPage}&end_page=${endPage}`
+      );
+      if (imgRes.ok) {
+        const imgData = await imgRes.json();
+        setInvoiceImages((prev) => [...prev, ...imgData.images]);
+        setLoadedPageCount((prev) => prev + imgData.images.length);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadedPageCount, totalPages, loadingMore]);
+
+  // ページ遷移時に未読み込みなら追加取得
+  const handlePageChange = useCallback(async (newPage: number) => {
+    setCurrentPage(newPage);
+    // 次のページがまだ読み込まれていない場合、先読み
+    if (newPage >= loadedPageCount - 1 && loadedPageCount < totalPages) {
+      await loadMorePages();
+    }
+  }, [loadedPageCount, totalPages, loadMorePages]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('ja-JP', {
@@ -291,21 +335,46 @@ export const MonthlyInvoicePage: React.FC = () => {
                 <p className="mt-4 text-gray-600">画像を読み込み中...</p>
               </div>
             ) : invoiceImages.length > 0 ? (
-              <div className="space-y-4">
-                {invoiceImages.map((img, i) => (
-                  <div key={i} className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
-                      ページ {i + 1} / {invoiceImages.length}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="bg-gray-100 px-4 py-2 font-semibold text-center text-sm text-gray-700">
+                  ページ {currentPage + 1} / {totalPages}
+                </div>
+                <div className="bg-white p-4">
+                  {invoiceImages[currentPage] ? (
+                    <img
+                      src={invoiceImages[currentPage]}
+                      alt={`月次請求書 ページ ${currentPage + 1}`}
+                      className="w-full h-auto"
+                    />
+                  ) : loadingMore ? (
+                    <div className="text-center py-12">
+                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                      <p className="mt-2 text-sm text-gray-500">読み込み中...</p>
                     </div>
-                    <div className="bg-white p-4">
-                      <img
-                        src={img}
-                        alt={`月次請求書 ページ ${i + 1}`}
-                        className="w-full h-auto"
-                      />
-                    </div>
+                  ) : null}
+                </div>
+                {/* ページ切り替え */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-4 py-3 bg-gray-50 border-t border-gray-200">
+                    <button
+                      onClick={() => handlePageChange(Math.max(0, currentPage - 1))}
+                      disabled={currentPage === 0}
+                      className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold"
+                    >
+                      ◀
+                    </button>
+                    <span className="text-sm font-medium text-gray-600">
+                      ページ {currentPage + 1} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => handlePageChange(Math.min(totalPages - 1, currentPage + 1))}
+                      disabled={currentPage === totalPages - 1}
+                      className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold"
+                    >
+                      ▶
+                    </button>
                   </div>
-                ))}
+                )}
               </div>
             ) : (
               <div className="border border-dashed border-gray-300 rounded-lg p-12 text-center bg-gray-50">

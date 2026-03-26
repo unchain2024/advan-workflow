@@ -48,7 +48,7 @@ base64 -w 0 credentials.json
 - **Environment**: Python
 - **Region**: Oregon
 - **Build Command**: `pip install -r requirements.txt && cd frontend-react && npm ci && npm run build`
-- **Start Command**: `cd backend-api && python -m uvicorn main:app --host 0.0.0.0 --port $PORT`
+- **Start Command**: `python -m uvicorn backend-api.main:app --host 0.0.0.0 --port $PORT`
 
 ---
 

@@ -505,11 +505,16 @@ async def pdf_to_image(filename: str, page: int = 1):
 class PDFToImagesResponse(BaseModel):
     images: list[str]  # base64エンコードされた画像のリスト
     num_pages: int
+    start_page: int  # 返却した最初のページ番号（1-indexed）
 
 
 @router.get("/pdf-to-images/{filename}", response_model=PDFToImagesResponse)
-async def pdf_to_images(filename: str):
-    """PDFの全ページを画像（base64）に変換して返す"""
+async def pdf_to_images(
+    filename: str,
+    start_page: int = 1,
+    end_page: int | None = None,
+):
+    """PDFのページを画像（base64）に変換して返す（ページ範囲指定対応）"""
     output_dir = Path(__file__).parent.parent.parent / "output"
     file_path = output_dir / filename
 
@@ -517,10 +522,24 @@ async def pdf_to_images(filename: str):
         raise HTTPException(status_code=404, detail="ファイルが見つかりません")
 
     try:
-        # PDFを画像に変換（全ページ）
+        from pdf2image.pdf2image import pdfinfo_from_path
+
+        # 総ページ数を軽量に取得
+        info = pdfinfo_from_path(str(file_path))
+        total_pages = info["Pages"]
+
+        # デフォルトは5ページずつ
+        if end_page is None:
+            end_page = min(start_page + 4, total_pages)
+        end_page = min(end_page, total_pages)
+        start_page = max(1, start_page)
+
+        # 指定範囲のページだけ変換
         images = convert_from_path(
             str(file_path),
-            dpi=150,  # 解像度
+            dpi=150,
+            first_page=start_page,
+            last_page=end_page,
         )
 
         # 各画像をbase64エンコード
@@ -534,7 +553,8 @@ async def pdf_to_images(filename: str):
 
         return PDFToImagesResponse(
             images=encoded_images,
-            num_pages=len(images),
+            num_pages=total_pages,
+            start_page=start_page,
         )
 
     except Exception as e:
