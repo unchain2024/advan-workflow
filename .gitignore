@@ -20,3 +20,4 @@ credemtials.json
 env
 README.md
 .gitignore
+data/monthly_items.db.bak_*

@@ -1,0 +1,208 @@
+[
+  {
+    "filename": "0218アダストリア岡部@6100.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0218アダストリア岡部@6100.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "8300017007514",
+    "extracted_date": "2026/02/18",
+    "extracted_items_count": 4,
+    "extracted_quantity_sum": 97,
+    "extracted_items_sum": 591700,
+    "extracted_subtotal": 591700,
+    "extracted_total": 650870,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "8300017007514",
+    "truth_date": "2026/02/13",
+    "truth_items_count": 4,
+    "truth_quantity_sum": 97,
+    "truth_subtotal": 591700,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "アダストリア納品伝票 W/Lapel-Shirts ファイル名@6100=下代単価 本体価格18000は売価",
+    "extracted_items": [
+      {
+        "product_code": "HA700002AA",
+        "product_name": "W/Lapel-Shirts",
+        "quantity": 35,
+        "unit_price": 6100,
+        "amount": 213500
+      },
+      {
+        "product_code": "HA700002AA",
+        "product_name": "W/Lapel-Shirts",
+        "quantity": 19,
+        "unit_price": 6100,
+        "amount": 115900
+      },
+      {
+        "product_code": "HA700002AA",
+        "product_name": "W/Lapel-Shirts",
+        "quantity": 24,
+        "unit_price": 6100,
+        "amount": 146400
+      },
+      {
+        "product_code": "HA700002AA",
+        "product_name": "W/Lapel-Shirts",
+        "quantity": 19,
+        "unit_price": 6100,
+        "amount": 115900
+      }
+    ]
+  },
+  {
+    "filename": "0218アダストリア岡部@8600.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0218アダストリア岡部@8600.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "8300017007491",
+    "extracted_date": "2026/02/18",
+    "extracted_items_count": 6,
+    "extracted_quantity_sum": 107,
+    "extracted_items_sum": 920200,
+    "extracted_subtotal": 920200,
+    "extracted_total": 1012220,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "8300017007491",
+    "truth_date": "2026/02/13",
+    "truth_items_count": 6,
+    "truth_quantity_sum": 107,
+    "truth_subtotal": 920200,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "アダストリア納品伝票 N/Classic-Shirts ファイル名@8600=下代単価 本体価格18000は売価",
+    "extracted_items": [
+      {
+        "product_code": "HA700001AA",
+        "product_name": "N/Classic-Shirts",
+        "quantity": 15,
+        "unit_price": 8600,
+        "amount": 129000
+      },
+      {
+        "product_code": "HA700001AA",
+        "product_name": "N/Classic-Shirts",
+        "quantity": 16,
+        "unit_price": 8600,
+        "amount": 137600
+      },
+      {
+        "product_code": "HA700001AA",
+        "product_name": "N/Classic-Shirts",
+        "quantity": 22,
+        "unit_price": 8600,
+        "amount": 189200
+      },
+      {
+        "product_code": "HA700001AA",
+        "product_name": "N/Classic-Shirts",
+        "quantity": 21,
+        "unit_price": 8600,
+        "amount": 180600
+      },
+      {
+        "product_code": "HA700001AA",
+        "product_name": "N/Classic-Shirts",
+        "quantity": 17,
+        "unit_price": 8600,
+        "amount": 146200
+      },
+      {
+        "product_code": "HA700001AA",
+        "product_name": "N/Classic-Shirts",
+        "quantity": 16,
+        "unit_price": 8600,
+        "amount": 137600
+      }
+    ]
+  },
+  {
+    "filename": "0220アダストリア岡部2@7150.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0220アダストリア岡部2@7150.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "8300017051302",
+    "extracted_date": "2026/02/20",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 35,
+    "extracted_items_sum": 250250,
+    "extracted_subtotal": 250250,
+    "extracted_total": 275275,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "8300017051302",
+    "truth_date": "2026/02/18",
+    "truth_items_count": 2,
+    "truth_quantity_sum": 35,
+    "truth_subtotal": 250250,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "アダストリア納品伝票 CLASSICAL OP マークMY100464AA 同マーク2回目",
+    "extracted_items": [
+      {
+        "product_code": "MY100464AA",
+        "product_name": "CLASSICAL OP",
+        "quantity": 7,
+        "unit_price": 7150,
+        "amount": 50050
+      },
+      {
+        "product_code": "MY100464AA",
+        "product_name": "CLASSICAL OP",
+        "quantity": 28,
+        "unit_price": 7150,
+        "amount": 200200
+      }
+    ]
+  },
+  {
+    "filename": "0220アダストリア岡部@7150.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0220アダストリア岡部@7150.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "8300017051296",
+    "extracted_date": "2026/02/20",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 35,
+    "extracted_items_sum": 250250,
+    "extracted_subtotal": 250250,
+    "extracted_total": 275275,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "8300017051296",
+    "truth_date": "2026/02/18",
+    "truth_items_count": 2,
+    "truth_quantity_sum": 35,
+    "truth_subtotal": 250250,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "アダストリア納品伝票 CLASSICAL OP マークMY100464AA ファイル名@7150=下代単価",
+    "extracted_items": [
+      {
+        "product_code": "MY100464AA",
+        "product_name": "CLASSICAL OP",
+        "quantity": 22,
+        "unit_price": 7150,
+        "amount": 157300
+      },
+      {
+        "product_code": "MY100464AA",
+        "product_name": "CLASSICAL OP",
+        "quantity": 13,
+        "unit_price": 7150,
+        "amount": 92950
+      }
+    ]
+  }
+]

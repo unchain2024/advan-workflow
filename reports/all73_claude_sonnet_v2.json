@@ -1,0 +1,757 @@
+[
+  {
+    "filename": "0205バロックmoussy_星野_Part1.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0205バロックmoussy_星野_Part1.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602040001",
+    "extracted_date": "2026/02/05",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 2,
+    "extracted_items_sum": 4080,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -4080,
+    "truth_slip_number": "5000052602040001",
+    "truth_date": "2026/02/05",
+    "truth_items_count": 2,
+    "truth_quantity_sum": 2,
+    "truth_subtotal": 4080,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 SKINNY HANDLE TOTE BAG S 納前 手書き単価2040円",
+    "extracted_items": [
+      {
+        "product_code": "010JS155-4581",
+        "product_name": "SKINNY HANDLE TOTE BAG S",
+        "quantity": 1,
+        "unit_price": 2040,
+        "amount": 2040
+      },
+      {
+        "product_code": "010JS155-4581",
+        "product_name": "SKINNY HANDLE TOTE BAG S",
+        "quantity": 1,
+        "unit_price": 2040,
+        "amount": 2040
+      }
+    ]
+  },
+  {
+    "filename": "0205バロックmoussy_星野_Part2.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0205バロックmoussy_星野_Part2.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602040002",
+    "extracted_date": "2026/02/05",
+    "extracted_items_count": 3,
+    "extracted_quantity_sum": 3,
+    "extracted_items_sum": 6585,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -6585,
+    "truth_slip_number": "5000052602040002",
+    "truth_date": "2026/02/05",
+    "truth_items_count": 3,
+    "truth_quantity_sum": 3,
+    "truth_subtotal": 6585,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 SKINNY HANDLE TOTE BAG 納前 手書き単価2195円",
+    "extracted_items": [
+      {
+        "product_code": "010JS155-4591",
+        "product_name": "SKINNY HANDLE TOTE BAG",
+        "quantity": 1,
+        "unit_price": 2195,
+        "amount": 2195
+      },
+      {
+        "product_code": "010JS155-4591",
+        "product_name": "SKINNY HANDLE TOTE BAG",
+        "quantity": 1,
+        "unit_price": 2195,
+        "amount": 2195
+      },
+      {
+        "product_code": "010JS155-4591",
+        "product_name": "SKINNY HANDLE TOTE BAG",
+        "quantity": 1,
+        "unit_price": 2195,
+        "amount": 2195
+      }
+    ]
+  },
+  {
+    "filename": "0205バロックmoussy_星野_Part3.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0205バロックmoussy_星野_Part3.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602040003",
+    "extracted_date": "2026/02/05",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 2,
+    "extracted_items_sum": 4600,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -4600,
+    "truth_slip_number": "5000052602040003",
+    "truth_date": "2026/02/05",
+    "truth_items_count": 2,
+    "truth_quantity_sum": 2,
+    "truth_subtotal": 4600,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 KEY CHAIN COMBI BAG 納前 手書き単価2300円",
+    "extracted_items": [
+      {
+        "product_code": "029JSA55-0261",
+        "product_name": "KEY CHAIN COMBI BAG",
+        "quantity": 1,
+        "unit_price": 2300,
+        "amount": 2300
+      },
+      {
+        "product_code": "029JSA55-0261",
+        "product_name": "KEY CHAIN COMBI BAG",
+        "quantity": 1,
+        "unit_price": 2300,
+        "amount": 2300
+      }
+    ]
+  },
+  {
+    "filename": "0209SIM・佐藤1枚.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0209SIM・佐藤1枚.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "",
+    "extracted_date": "2026/02/09",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 2,
+    "extracted_items_sum": -11080,
+    "extracted_subtotal": -11080,
+    "extracted_total": -12188,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "",
+    "truth_date": "2026/02/09",
+    "truth_items_count": 2,
+    "truth_quantity_sum": -2,
+    "truth_subtotal": -11080,
+    "diff_items": 0,
+    "diff_quantity": 4,
+    "diff_amount": 0,
+    "pass_status": "FAIL",
+    "error": "",
+    "notes": "SIM発行の返品書 修理不可で返品 摘要に品番品名連結 税抜小計",
+    "extracted_items": [
+      {
+        "product_code": "Null-093JS",
+        "product_name": "BAGGY THREE QUARTER(8部丈)",
+        "quantity": 1,
+        "unit_price": 5430,
+        "amount": -5430
+      },
+      {
+        "product_code": "Null-109JS",
+        "product_name": "BAGGY CANVAS",
+        "quantity": 1,
+        "unit_price": 5650,
+        "amount": -5650
+      }
+    ]
+  },
+  {
+    "filename": "0210バロックmoussy_星野_Part1.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0210バロックmoussy_星野_Part1.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602090005",
+    "extracted_date": "2026/02/10",
+    "extracted_items_count": 3,
+    "extracted_quantity_sum": 3,
+    "extracted_items_sum": 762,
+    "extracted_subtotal": 762,
+    "extracted_total": 838,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "5000052602090005",
+    "truth_date": "2026/02/10",
+    "truth_items_count": 3,
+    "truth_quantity_sum": 3,
+    "truth_subtotal": 2286,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": -1524,
+    "pass_status": "FAIL",
+    "error": "",
+    "notes": "BJL納品書 moussy MOUSSY SOUVENIR CANVAS BAG 納前 手書き762円",
+    "extracted_items": [
+      {
+        "product_code": "010JSA55-5381",
+        "product_name": "MOUSSY SOUVENIR CANVAS BAG",
+        "quantity": 1,
+        "unit_price": 254,
+        "amount": 254
+      },
+      {
+        "product_code": "010JSA55-5381",
+        "product_name": "MOUSSY SOUVENIR CANVAS BAG",
+        "quantity": 1,
+        "unit_price": 254,
+        "amount": 254
+      },
+      {
+        "product_code": "010JSA55-5381",
+        "product_name": "MOUSSY SOUVENIR CANVAS BAG",
+        "quantity": 1,
+        "unit_price": 254,
+        "amount": 254
+      }
+    ]
+  },
+  {
+    "filename": "0210バロックmoussy_星野_Part2.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0210バロックmoussy_星野_Part2.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602090004",
+    "extracted_date": "2026/02/10",
+    "extracted_items_count": 1,
+    "extracted_quantity_sum": 1,
+    "extracted_items_sum": 870,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -870,
+    "truth_slip_number": "5000052602090004",
+    "truth_date": "2026/02/10",
+    "truth_items_count": 1,
+    "truth_quantity_sum": 1,
+    "truth_subtotal": 870,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 moussy MOUSSY SOUVENIR F/LEATHER BAG 納前 手書き870円",
+    "extracted_items": [
+      {
+        "product_code": "010JSA55-5391",
+        "product_name": "MOUSSY SOUVENIR F/LEATHER BAG",
+        "quantity": 1,
+        "unit_price": 870,
+        "amount": 870
+      }
+    ]
+  },
+  {
+    "filename": "0210バロックmoussyazul_星野_Part1.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0210バロックmoussyazul_星野_Part1.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602090002",
+    "extracted_date": "2026/02/12",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 1498,
+    "extracted_items_sum": 0,
+    "extracted_subtotal": 1680,
+    "extracted_total": 1848,
+    "subtotal_vs_items_diff": 1680,
+    "truth_slip_number": "5000052602090002",
+    "truth_date": "2026/02/12",
+    "truth_items_count": 2,
+    "truth_quantity_sum": 1498,
+    "truth_subtotal": 2516640,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": -2516640,
+    "pass_status": "FAIL",
+    "error": "",
+    "notes": "BJL納品書 AZUL ハーフムーンショルダーバッグ 量産 東松山倉庫 手書き1680円",
+    "extracted_items": [
+      {
+        "product_code": "250JSB55-0901",
+        "product_name": "ハーフムーンショルダーバッグ",
+        "quantity": 899,
+        "unit_price": 0,
+        "amount": 0
+      },
+      {
+        "product_code": "250JSB55-0901",
+        "product_name": "ハーフムーンショルダーバッグ",
+        "quantity": 599,
+        "unit_price": 0,
+        "amount": 0
+      }
+    ]
+  },
+  {
+    "filename": "0210バロックmoussyazul_星野_Part2.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0210バロックmoussyazul_星野_Part2.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602090003",
+    "extracted_date": "2026/02/10",
+    "extracted_items_count": 9,
+    "extracted_quantity_sum": 782,
+    "extracted_items_sum": 2424200,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -2424200,
+    "truth_slip_number": "5000052602090003",
+    "truth_date": "2026/02/10",
+    "truth_items_count": 9,
+    "truth_quantity_sum": 782,
+    "truth_subtotal": 2424200,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 INSILENCE SLOUCHY TOTE BAG 量産 海外卸FC+moussy+Sheltter 北柏倉庫 手書き3100円",
+    "extracted_items": [
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 100,
+        "unit_price": 3100,
+        "amount": 310000
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 100,
+        "unit_price": 3100,
+        "amount": 310000
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 299,
+        "unit_price": 3100,
+        "amount": 926900
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 104,
+        "unit_price": 3100,
+        "amount": 322400
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 136,
+        "unit_price": 3100,
+        "amount": 421600
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 10,
+        "unit_price": 3100,
+        "amount": 31000
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 10,
+        "unit_price": 3100,
+        "amount": 31000
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 10,
+        "unit_price": 3100,
+        "amount": 31000
+      },
+      {
+        "product_code": "010JSF01-3931",
+        "product_name": "INSILENCE SLOUCHY TOTE BAG",
+        "quantity": 13,
+        "unit_price": 3100,
+        "amount": 40300
+      }
+    ]
+  },
+  {
+    "filename": "0220アダストリア返品_岡部原田.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0220アダストリア返品_岡部原田.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "6304392005090",
+    "extracted_date": "2026/02/20",
+    "extracted_items_count": 8,
+    "extracted_quantity_sum": 9,
+    "extracted_items_sum": -24700,
+    "extracted_subtotal": -24700,
+    "extracted_total": -27170,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "6304392005090",
+    "truth_date": "2026/02/20",
+    "truth_items_count": 8,
+    "truth_quantity_sum": -9,
+    "truth_subtotal": -24700,
+    "diff_items": 0,
+    "diff_quantity": 18,
+    "diff_amount": 0,
+    "pass_status": "FAIL",
+    "error": "",
+    "notes": "返品伝票 JEANASIS 原単価2700-3100 ハイブリッドな単価行",
+    "extracted_items": [
+      {
+        "product_code": "JS051120AA",
+        "product_name": "",
+        "quantity": 1,
+        "unit_price": 2700,
+        "amount": -2700
+      },
+      {
+        "product_code": "JS051147AA",
+        "product_name": "",
+        "quantity": 1,
+        "unit_price": 2700,
+        "amount": -2700
+      },
+      {
+        "product_code": "JS051120AA",
+        "product_name": "",
+        "quantity": 2,
+        "unit_price": 2700,
+        "amount": -5400
+      },
+      {
+        "product_code": "JS051147AA",
+        "product_name": "",
+        "quantity": 1,
+        "unit_price": 2700,
+        "amount": -2700
+      },
+      {
+        "product_code": "JS051147AA",
+        "product_name": "",
+        "quantity": 1,
+        "unit_price": 2700,
+        "amount": -2700
+      },
+      {
+        "product_code": "JS051120AA",
+        "product_name": "",
+        "quantity": 1,
+        "unit_price": 2700,
+        "amount": -2700
+      },
+      {
+        "product_code": "JS051120AA",
+        "product_name": "",
+        "quantity": 1,
+        "unit_price": 2700,
+        "amount": -2700
+      },
+      {
+        "product_code": "LF800050AA",
+        "product_name": "",
+        "quantity": 1,
+        "unit_price": 3100,
+        "amount": -3100
+      }
+    ]
+  },
+  {
+    "filename": "0224バロック返品_一和多.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0224バロック返品_一和多.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "94715320",
+    "extracted_date": "2026/02/24",
+    "extracted_items_count": 1,
+    "extracted_quantity_sum": 1,
+    "extracted_items_sum": -2650,
+    "extracted_subtotal": -2650,
+    "extracted_total": -2915,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "94715320",
+    "truth_date": "2026/02/24",
+    "truth_items_count": 1,
+    "truth_quantity_sum": -1,
+    "truth_subtotal": -2650,
+    "diff_items": 0,
+    "diff_quantity": 2,
+    "diff_amount": 0,
+    "pass_status": "FAIL",
+    "error": "",
+    "notes": "仕入返品伝票 NIOHIXSLY STUDS BAG 1月店舗戻りリスト",
+    "extracted_items": [
+      {
+        "product_code": "030JSA01-0401",
+        "product_name": "MICHIXSLY STUDS BAG",
+        "quantity": 1,
+        "unit_price": 2650,
+        "amount": -2650
+      }
+    ]
+  },
+  {
+    "filename": "0224バロック返品_星野.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0224バロック返品_星野.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "94715321",
+    "extracted_date": "2026/02/24",
+    "extracted_items_count": 6,
+    "extracted_quantity_sum": 7,
+    "extracted_items_sum": -11840,
+    "extracted_subtotal": -11840,
+    "extracted_total": -13024,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "94715321",
+    "truth_date": "2026/02/24",
+    "truth_items_count": 6,
+    "truth_quantity_sum": -7,
+    "truth_subtotal": -11840,
+    "diff_items": 0,
+    "diff_quantity": 14,
+    "diff_amount": 0,
+    "pass_status": "FAIL",
+    "error": "",
+    "notes": "仕入返品伝票 6種バッグ 1月店舗戻りリスト",
+    "extracted_items": [
+      {
+        "product_code": "2501AC55-1271",
+        "product_name": "ワイドベルトボックスボックスカットバッグ",
+        "quantity": 2,
+        "unit_price": 1680,
+        "amount": -3360
+      },
+      {
+        "product_code": "2501AC55-1311",
+        "product_name": "チャームセットミニダッフルバッグ",
+        "quantity": 1,
+        "unit_price": 1790,
+        "amount": -1790
+      },
+      {
+        "product_code": "250JSC55-0021",
+        "product_name": "チャームセットバニティバッグ",
+        "quantity": 1,
+        "unit_price": 1730,
+        "amount": -1730
+      },
+      {
+        "product_code": "250JSB55-0051",
+        "product_name": "ダブルジップカバーハンドバッグ",
+        "quantity": 1,
+        "unit_price": 1550,
+        "amount": -1550
+      },
+      {
+        "product_code": "2501AC55-087K",
+        "product_name": "サイドレースアップボックスボックスカットミニバッグ",
+        "quantity": 1,
+        "unit_price": 1680,
+        "amount": -1680
+      },
+      {
+        "product_code": "250JSC55-0021",
+        "product_name": "チャームセットバニティバッグ",
+        "quantity": 1,
+        "unit_price": 1730,
+        "amount": -1730
+      }
+    ]
+  },
+  {
+    "filename": "0225バロックmoussy_星野_Part1.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0225バロックmoussy_星野_Part1.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602240001",
+    "extracted_date": "2026/02/25",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 674,
+    "extracted_items_sum": 1374960,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -1374960,
+    "truth_slip_number": "5000052602240001",
+    "truth_date": "2026/02/25",
+    "truth_items_count": 2,
+    "truth_quantity_sum": 674,
+    "truth_subtotal": 1374960,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 moussy SKINNY HANDLE TOTE BAG S 量産 北柏倉庫 手書き2040円",
+    "extracted_items": [
+      {
+        "product_code": "010JS155-4581",
+        "product_name": "SKINNY HANDLE TOTE BAG S",
+        "quantity": 234,
+        "unit_price": 2040,
+        "amount": 477360
+      },
+      {
+        "product_code": "010JS155-4581",
+        "product_name": "SKINNY HANDLE TOTE BAG S",
+        "quantity": 440,
+        "unit_price": 2040,
+        "amount": 897600
+      }
+    ]
+  },
+  {
+    "filename": "0225バロックmoussy_星野_Part2.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0225バロックmoussy_星野_Part2.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602240002",
+    "extracted_date": "2026/02/25",
+    "extracted_items_count": 3,
+    "extracted_quantity_sum": 648,
+    "extracted_items_sum": 1422360,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -1422360,
+    "truth_slip_number": "5000052602240002",
+    "truth_date": "2026/02/25",
+    "truth_items_count": 3,
+    "truth_quantity_sum": 648,
+    "truth_subtotal": 1422360,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 moussy SKINNY HANDLE TOTE BAG 量産 北柏倉庫 手書き2195円",
+    "extracted_items": [
+      {
+        "product_code": "010JS155-4591",
+        "product_name": "SKINNY HANDLE TOTE BAG",
+        "quantity": 192,
+        "unit_price": 2195,
+        "amount": 421440
+      },
+      {
+        "product_code": "010JS155-4591",
+        "product_name": "SKINNY HANDLE TOTE BAG",
+        "quantity": 360,
+        "unit_price": 2195,
+        "amount": 790200
+      },
+      {
+        "product_code": "010JS155-4591",
+        "product_name": "SKINNY HANDLE TOTE BAG",
+        "quantity": 96,
+        "unit_price": 2195,
+        "amount": 210720
+      }
+    ]
+  },
+  {
+    "filename": "0225バロックmoussy_星野_Part3.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0225バロックmoussy_星野_Part3.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "5000052602240003",
+    "extracted_date": "2026/02/25",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": 628,
+    "extracted_items_sum": 1444400,
+    "extracted_subtotal": 0,
+    "extracted_total": 0,
+    "subtotal_vs_items_diff": -1444400,
+    "truth_slip_number": "5000052602240003",
+    "truth_date": "2026/02/25",
+    "truth_items_count": 2,
+    "truth_quantity_sum": 628,
+    "truth_subtotal": 1444400,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "BJL納品書 moussy KEY CHAIN COMBI BAG 量産 北柏倉庫 手書き2300円",
+    "extracted_items": [
+      {
+        "product_code": "029JSA55-0261",
+        "product_name": "KEY CHAIN COMBI BAG",
+        "quantity": 314,
+        "unit_price": 2300,
+        "amount": 722200
+      },
+      {
+        "product_code": "029JSA55-0261",
+        "product_name": "KEY CHAIN COMBI BAG",
+        "quantity": 314,
+        "unit_price": 2300,
+        "amount": 722200
+      }
+    ]
+  },
+  {
+    "filename": "0227JUN_原田.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0227JUN_原田.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "409911-1",
+    "extracted_date": "2026/02/27",
+    "extracted_items_count": 4,
+    "extracted_quantity_sum": 202,
+    "extracted_items_sum": 1535200,
+    "extracted_subtotal": 1535200,
+    "extracted_total": 1688720,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "409911-1",
+    "truth_date": "2026/02/27",
+    "truth_items_count": 4,
+    "truth_quantity_sum": 202,
+    "truth_subtotal": 1535200,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "JUN発行の納品依頼書 量産202枚 下館DS",
+    "extracted_items": [
+      {
+        "product_code": "GAE-06020",
+        "product_name": "ディープスリットデニムワンピース",
+        "quantity": 60,
+        "unit_price": 7600,
+        "amount": 456000
+      },
+      {
+        "product_code": "GAE-06020",
+        "product_name": "ディープスリットデニムワンピース",
+        "quantity": 41,
+        "unit_price": 7600,
+        "amount": 311600
+      },
+      {
+        "product_code": "GAE-06020",
+        "product_name": "ディープスリットデニムワンピース",
+        "quantity": 61,
+        "unit_price": 7600,
+        "amount": 463600
+      },
+      {
+        "product_code": "GAE-06020",
+        "product_name": "ディープスリットデニムワンピース",
+        "quantity": 40,
+        "unit_price": 7600,
+        "amount": 304000
+      }
+    ]
+  }
+]

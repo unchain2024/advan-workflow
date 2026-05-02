@@ -13,8 +13,8 @@ from pydantic import BaseModel
 from pdf2image import convert_from_path
 from PIL import Image
 
-from src.llm_extractor import LLMExtractor
-from src.sheets_client import GoogleSheetsClient
+from src.extractor import UnifiedExtractor
+from src.sheets_client import GoogleSheetsClient, PreviousBilling
 from src.invoice_generator import InvoiceGenerator
 from src.pdf_extractor import DeliveryNote, DeliveryItem
 
@@ -175,9 +175,9 @@ async def process_pdf(
         tmp_path = Path(tmp_file.name)
 
     try:
-        # 1. PDF抽出
-        extractor = LLMExtractor()
-        delivery_note = extractor.extract(tmp_path)
+        # 1. PDF抽出 (バックエンドはEXTRACTOR_BACKEND env で切替可能。既定: claude)
+        extractor = UnifiedExtractor()
+        delivery_note = extractor.extract(tmp_path, original_filename=file.filename)
 
         # 会社名がNoneの場合はエラーを返す
         if not delivery_note.company_name:
@@ -617,8 +617,7 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
         # 2. 会社情報取得（正規化済みの会社名で検索）
         company_info = sheets_client.get_company_info(company_name)
 
-        # 3. 前月の請求情報を取得
-        # 年月を "YYYY-MM" 形式に変換
+        # 3. 前月の請求情報を取得（DB優先、空ならシートにフォールバック）
         match = re.match(r'(\d+)年(\d+)月', request.year_month)
         if match:
             year = match.group(1)
@@ -627,10 +626,30 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
         else:
             year_month_dash = ""
 
-        previous_billing = sheets_client.get_previous_billing(
-            company_name,
-            year_month_dash,
+        ledger = db.compute_ledger(company_name, request.year_month)
+        db_has_data = (
+            ledger["previous_balance"] != 0
+            or ledger["opening_balance"] != 0
+            or ledger["payment_amount"] != 0
         )
+        if db_has_data:
+            previous_amount = ledger["previous_balance"] + ledger["opening_balance"]
+            payment_received = ledger["payment_amount"]
+            previous_billing = PreviousBilling(
+                previous_amount=previous_amount,
+                payment_received=payment_received,
+                carried_over=previous_amount - payment_received,
+            )
+            print(
+                f"    前月請求情報 (DB): prev={previous_amount}, "
+                f"payment={payment_received}, carried={previous_amount - payment_received}"
+            )
+        else:
+            previous_billing = sheets_client.get_previous_billing(
+                company_name,
+                year_month_dash,
+            )
+            print(f"    前月請求情報 (シート fallback): {previous_billing}")
 
         # 4. 月次請求書PDF生成
         invoice_generator = InvoiceGenerator()

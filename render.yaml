@@ -25,17 +25,23 @@ services:
       - key: GOOGLE_CREDENTIALS_BASE64
         sync: false  # Render Dashboardで手動設定
 
-      # Claude API
+      # 抽出器バックエンド (claude / gemini)
+      - key: EXTRACTOR_BACKEND
+        value: "claude"
+
+      # Claude API（主バックエンド・OCR精度97.3%）
       - key: ANTHROPIC_API_KEY
         sync: false  # Render Dashboardで手動設定
+      - key: CLAUDE_MODEL
+        value: "claude-sonnet-4-6"
       - key: LLM_MODEL
-        value: "claude-sonnet-4-20250514"
+        value: "claude-sonnet-4-20250514"  # 旧設定（未使用・後方互換のため残置）
 
-      # Gemini API
+      # Gemini API（フォールバック）
       - key: GEMINI_API_KEY
         sync: false  # Render Dashboardで手動設定
       - key: GEMINI_MODEL
-        value: "gemini-2.5-flash"
+        value: "gemini-3-flash-preview"
 
       # Google Sheets ID（会社情報マスター）
       - key: COMPANY_MASTER_SPREADSHEET_ID

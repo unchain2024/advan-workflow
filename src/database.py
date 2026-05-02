@@ -207,6 +207,25 @@ class MonthlyItemsDB:
                     ON purchase_notes(purchase_invoice_id, slip_number)
                 """)
 
+            # --- 売上入金管理用テーブル（消滅・繰越をDBで管理） ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS monthly_payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_name TEXT NOT NULL,
+                    year_month TEXT NOT NULL,
+                    payment_amount INTEGER NOT NULL DEFAULT 0,
+                    opening_balance INTEGER NOT NULL DEFAULT 0,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(company_name, year_month)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_monthly_payments_company_ym
+                ON monthly_payments(company_name, year_month)
+            """)
+
             # 旧テーブルからマイグレーション
             cursor.execute("""
                 SELECT name FROM sqlite_master
@@ -1314,3 +1333,219 @@ class MonthlyItemsDB:
                 SET subtotal = ?, tax = ?, total = ?, updated_at = ?
                 WHERE id = ?
             """, (subtotal, tax, total, current_time, note_id))
+
+    # --- 売上入金管理（消滅・繰越） ---
+
+    def upsert_payment(
+        self,
+        company_name: str,
+        year_month: str,
+        payment_amount: int = 0,
+        opening_balance: Optional[int] = None,
+        note: Optional[str] = None,
+    ) -> dict:
+        """消滅（入金）を登録または更新
+
+        opening_balance/note は None 指定時は既存値を保持。新規行作成時は 0/"" が入る。
+        """
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, opening_balance, note FROM monthly_payments
+                WHERE company_name = ? AND year_month = ?
+            """, (company_name, year_month))
+            row = cursor.fetchone()
+            if row:
+                new_opening = row["opening_balance"] if opening_balance is None else opening_balance
+                new_note = row["note"] if note is None else note
+                cursor.execute("""
+                    UPDATE monthly_payments
+                    SET payment_amount = ?, opening_balance = ?, note = ?, updated_at = ?
+                    WHERE id = ?
+                """, (payment_amount, new_opening, new_note, current_time, row["id"]))
+                pid = row["id"]
+            else:
+                cursor.execute("""
+                    INSERT INTO monthly_payments
+                    (company_name, year_month, payment_amount, opening_balance, note, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    company_name, year_month, payment_amount,
+                    opening_balance or 0, note or "", current_time, current_time,
+                ))
+                pid = cursor.lastrowid
+            return {
+                "id": pid,
+                "company_name": company_name,
+                "year_month": year_month,
+                "payment_amount": payment_amount,
+            }
+
+    def get_payment(self, company_name: str, year_month: str) -> Optional[dict]:
+        """指定会社・年月の消滅エントリを取得"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM monthly_payments
+                WHERE company_name = ? AND year_month = ?
+            """, (company_name, year_month))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "company_name": row["company_name"],
+                "year_month": row["year_month"],
+                "payment_amount": row["payment_amount"],
+                "opening_balance": row["opening_balance"],
+                "note": row["note"],
+            }
+
+    def get_monthly_amounts(self, company_name: str, year_month: str) -> dict:
+        """指定会社・年月の発生(subtotal)・消費税合計を delivery_notes から集計"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(SUM(dn.subtotal), 0) AS subtotal,
+                       COALESCE(SUM(dn.tax), 0) AS tax,
+                       COUNT(dn.id) AS notes_count
+                FROM delivery_notes dn
+                JOIN monthly_invoices mi ON dn.monthly_invoice_id = mi.id
+                WHERE mi.company_name = ? AND mi.year_month = ?
+            """, (company_name, year_month))
+            row = cursor.fetchone()
+            return {
+                "subtotal": row["subtotal"] or 0,
+                "tax": row["tax"] or 0,
+                "notes_count": row["notes_count"] or 0,
+            }
+
+    def compute_ledger(self, company_name: str, year_month: str) -> dict:
+        """指定会社・年月の台帳（発生・消費税・消滅・繰越・残高）をDBから計算
+
+        Returns:
+            {
+              "year_month": str,
+              "previous_balance": int,  # 前月残高（前月の carried_over）
+              "opening_balance": int,   # 当月の初期残高（通常は 0、必要時手動設定）
+              "subtotal": int,          # 発生
+              "tax": int,               # 消費税
+              "payment_amount": int,    # 消滅（入金）
+              "carried_over": int,      # 当月残高 = previous_balance + opening_balance + subtotal + tax - payment_amount
+            }
+        """
+        # 前月の carried_over を取得（再帰は避け、前月データだけ確認）
+        prev_ym = _shift_year_month(year_month, -1)
+        prev_balance = 0
+        if prev_ym:
+            prev_amounts = self.get_monthly_amounts(company_name, prev_ym)
+            prev_payment = self.get_payment(company_name, prev_ym)
+            prev_opening = (prev_payment or {}).get("opening_balance", 0)
+            prev_payment_amt = (prev_payment or {}).get("payment_amount", 0)
+            # 再帰的に辿らず、前月データだけで近似（単月前月との差分）
+            # 厳密に過去全て累積したい場合は compute_ledger を再帰で呼ぶ
+            prev_prev_ledger = self._compute_previous_balance(company_name, prev_ym)
+            prev_balance = (
+                prev_prev_ledger
+                + prev_opening
+                + prev_amounts["subtotal"]
+                + prev_amounts["tax"]
+                - prev_payment_amt
+            )
+
+        current_amounts = self.get_monthly_amounts(company_name, year_month)
+        current_payment = self.get_payment(company_name, year_month)
+        opening_balance = (current_payment or {}).get("opening_balance", 0)
+        payment_amount = (current_payment or {}).get("payment_amount", 0)
+
+        carried_over = (
+            prev_balance
+            + opening_balance
+            + current_amounts["subtotal"]
+            + current_amounts["tax"]
+            - payment_amount
+        )
+        return {
+            "year_month": year_month,
+            "previous_balance": prev_balance,
+            "opening_balance": opening_balance,
+            "subtotal": current_amounts["subtotal"],
+            "tax": current_amounts["tax"],
+            "payment_amount": payment_amount,
+            "carried_over": carried_over,
+            "notes_count": current_amounts["notes_count"],
+        }
+
+    def _compute_previous_balance(self, company_name: str, year_month: str) -> int:
+        """指定会社・年月の前月残高を再帰的に計算（履歴を遡る）
+
+        全履歴を辿るとコストが重いため、DB上に存在するエントリのみチェックし
+        なければ 0 を返す（初期残高は opening_balance で手動補正）。
+        """
+        prev_ym = _shift_year_month(year_month, -1)
+        if not prev_ym:
+            return 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # 前月に何かデータ(payment or invoice)が存在するか確認
+            cursor.execute("""
+                SELECT 1 FROM monthly_payments
+                WHERE company_name = ? AND year_month = ? LIMIT 1
+            """, (company_name, prev_ym))
+            has_payment = cursor.fetchone()
+            cursor.execute("""
+                SELECT 1 FROM monthly_invoices
+                WHERE company_name = ? AND year_month = ? LIMIT 1
+            """, (company_name, prev_ym))
+            has_invoice = cursor.fetchone()
+        if not has_payment and not has_invoice:
+            return 0
+        # 前月のledgerを再帰計算
+        prev_ledger = self.compute_ledger(company_name, prev_ym)
+        return prev_ledger["carried_over"]
+
+    def list_payments(
+        self, company_name: Optional[str] = None, year_month: Optional[str] = None
+    ) -> list[dict]:
+        """消滅エントリの一覧を取得"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            conditions = []
+            params: list = []
+            if company_name:
+                conditions.append("company_name = ?")
+                params.append(company_name)
+            if year_month:
+                conditions.append("year_month = ?")
+                params.append(year_month)
+            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+            cursor.execute(f"""
+                SELECT * FROM monthly_payments
+                {where}
+                ORDER BY company_name, year_month
+            """, params)
+            return [
+                {
+                    "id": row["id"],
+                    "company_name": row["company_name"],
+                    "year_month": row["year_month"],
+                    "payment_amount": row["payment_amount"],
+                    "opening_balance": row["opening_balance"],
+                    "note": row["note"],
+                }
+                for row in cursor.fetchall()
+            ]
+
+
+def _shift_year_month(year_month: str, delta_months: int) -> Optional[str]:
+    """'YYYY年M月' を delta_months ずらす。パース失敗時は None"""
+    import re as _re
+    m = _re.match(r"(\d+)年(\d+)月", year_month or "")
+    if not m:
+        return None
+    y, mo = int(m.group(1)), int(m.group(2))
+    idx = (y * 12 + (mo - 1)) + delta_months
+    new_y = idx // 12
+    new_m = (idx % 12) + 1
+    return f"{new_y}年{new_m}月"

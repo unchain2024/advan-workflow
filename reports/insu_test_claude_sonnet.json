@@ -1,0 +1,739 @@
+[
+  {
+    "filename": "0212インス・佐藤1枚（返品）.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0212インス・佐藤1枚（返品）.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "S260212-1",
+    "extracted_date": "2026/02/12",
+    "extracted_items_count": 2,
+    "extracted_quantity_sum": -2,
+    "extracted_items_sum": -12880,
+    "extracted_subtotal": -12880,
+    "extracted_total": -14168,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "S260212-1",
+    "truth_date": "2026/02/12",
+    "truth_items_count": 2,
+    "truth_quantity_sum": -2,
+    "truth_subtotal": -12880,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "返品。源は数量-1×2行。月次請求書側で数量欄が空白になる症状あり",
+    "extracted_items": [
+      {
+        "product_code": "BIG-246-BOY",
+        "product_name": "PEINTER-SK",
+        "quantity": -1,
+        "unit_price": 6440,
+        "amount": -6440
+      },
+      {
+        "product_code": "BIG-246-BOY",
+        "product_name": "PEINTER-SK",
+        "quantity": -1,
+        "unit_price": 6440,
+        "amount": -6440
+      }
+    ]
+  },
+  {
+    "filename": "0213インス・佐藤1枚（2026）.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0213インス・佐藤1枚（2026）.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "S251203-2",
+    "extracted_date": "2025/12/04",
+    "extracted_items_count": 4,
+    "extracted_quantity_sum": 4,
+    "extracted_items_sum": 11920,
+    "extracted_subtotal": 11920,
+    "extracted_total": 13112,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "S251203-2",
+    "truth_date": "2025/12/04",
+    "truth_items_count": 4,
+    "truth_quantity_sum": 4,
+    "truth_subtotal": 11920,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "源PDFの2-4行目は品番/品名空欄。直前行から継承されず Noneになる症状あり",
+    "extracted_items": [
+      {
+        "product_code": "WT26043AD/467",
+        "product_name": "MOTION PANTS",
+        "quantity": 1,
+        "unit_price": 2980,
+        "amount": 2980
+      },
+      {
+        "product_code": "WT26043AD/467",
+        "product_name": "MOTION PANTS",
+        "quantity": 1,
+        "unit_price": 2980,
+        "amount": 2980
+      },
+      {
+        "product_code": "WT26043AD/467",
+        "product_name": "MOTION PANTS",
+        "quantity": 1,
+        "unit_price": 2980,
+        "amount": 2980
+      },
+      {
+        "product_code": "WT26043AD/467",
+        "product_name": "MOTION PANTS",
+        "quantity": 1,
+        "unit_price": 2980,
+        "amount": 2980
+      }
+    ]
+  },
+  {
+    "filename": "0217インス・佐藤21枚_Part2@.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0217インス・佐藤21枚_Part2@.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "S260206-2",
+    "extracted_date": "2026/02/17",
+    "extracted_items_count": 26,
+    "extracted_quantity_sum": 247,
+    "extracted_items_sum": 1004600,
+    "extracted_subtotal": 1004600,
+    "extracted_total": 1105060,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "S260206-2",
+    "truth_date": "2026/02/17",
+    "truth_items_count": 26,
+    "truth_quantity_sum": 247,
+    "truth_subtotal": 1004600,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "+8枚 / +¥34,400 過大請求検出済み（重複2行 + 抜け1行 + 誤分類1行）",
+    "extracted_items": [
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 12,
+        "unit_price": 4000,
+        "amount": 48000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 25,
+        "unit_price": 4000,
+        "amount": 100000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 6,
+        "unit_price": 4000,
+        "amount": 24000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 8,
+        "unit_price": 4000,
+        "amount": 32000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 6,
+        "unit_price": 4000,
+        "amount": 24000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 12,
+        "unit_price": 4000,
+        "amount": 48000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 6,
+        "unit_price": 4000,
+        "amount": 24000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 13,
+        "unit_price": 4000,
+        "amount": 52000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 8,
+        "unit_price": 4000,
+        "amount": 32000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 9,
+        "unit_price": 4000,
+        "amount": 36000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 48,
+        "unit_price": 4000,
+        "amount": 192000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT",
+        "quantity": 4,
+        "unit_price": 4000,
+        "amount": 16000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT (中国分)",
+        "quantity": 4,
+        "unit_price": 4000,
+        "amount": 16000
+      },
+      {
+        "product_code": "WTL26002AD/478",
+        "product_name": "MOTION SKIRT (中国分)",
+        "quantity": 3,
+        "unit_price": 4000,
+        "amount": 12000
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 4,
+        "unit_price": 4200,
+        "amount": 16800
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 14,
+        "unit_price": 4200,
+        "amount": 58800
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 13,
+        "unit_price": 4200,
+        "amount": 54600
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 3,
+        "unit_price": 4200,
+        "amount": 12600
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 3,
+        "unit_price": 4200,
+        "amount": 12600
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 10,
+        "unit_price": 4200,
+        "amount": 42000
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 9,
+        "unit_price": 4200,
+        "amount": 37800
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 4,
+        "unit_price": 4200,
+        "amount": 16800
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 4,
+        "unit_price": 4200,
+        "amount": 16800
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 7,
+        "unit_price": 4200,
+        "amount": 29400
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 8,
+        "unit_price": 4200,
+        "amount": 33600
+      },
+      {
+        "product_code": "WT26042AD/466",
+        "product_name": "MOTION POKET CREW",
+        "quantity": 4,
+        "unit_price": 4200,
+        "amount": 16800
+      }
+    ]
+  },
+  {
+    "filename": "0217インス・佐藤21枚_Part4@.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0217インス・佐藤21枚_Part4@.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "S260206-4",
+    "extracted_date": "2026/02/17",
+    "extracted_items_count": 26,
+    "extracted_quantity_sum": 355,
+    "extracted_items_sum": 1258150,
+    "extracted_subtotal": 1258150,
+    "extracted_total": 1383965,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "S260206-4",
+    "truth_date": "2026/02/17",
+    "truth_items_count": 26,
+    "truth_quantity_sum": 355,
+    "truth_subtotal": 1258150,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "-8枚 / -¥40,400 抜け検出済み（CLIMER系4行連続スキップ）",
+    "extracted_items": [
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 1,
+        "unit_price": 5050,
+        "amount": 5050
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 3,
+        "unit_price": 5050,
+        "amount": 15150
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 1,
+        "unit_price": 5050,
+        "amount": 5050
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 1,
+        "unit_price": 5050,
+        "amount": 5050
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 3,
+        "unit_price": 5050,
+        "amount": 15150
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 3,
+        "unit_price": 5050,
+        "amount": 15150
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 1,
+        "unit_price": 5050,
+        "amount": 5050
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WT26039AD/490",
+        "product_name": "ELASTIC NYLON PRINT LAX SPT",
+        "quantity": 2,
+        "unit_price": 5050,
+        "amount": 10100
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 17,
+        "unit_price": 3400,
+        "amount": 57800
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 128,
+        "unit_price": 3400,
+        "amount": 435200
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 7,
+        "unit_price": 3400,
+        "amount": 23800
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 8,
+        "unit_price": 3400,
+        "amount": 27200
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 8,
+        "unit_price": 3400,
+        "amount": 27200
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 57,
+        "unit_price": 3400,
+        "amount": 193800
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 9,
+        "unit_price": 3400,
+        "amount": 30600
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 69,
+        "unit_price": 3400,
+        "amount": 234600
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 8,
+        "unit_price": 3400,
+        "amount": 27200
+      },
+      {
+        "product_code": "WTL26003AD/479",
+        "product_name": "MOTION ONEPICE",
+        "quantity": 13,
+        "unit_price": 3400,
+        "amount": 44200
+      }
+    ]
+  },
+  {
+    "filename": "0217インス・佐藤21枚_Part6@.pdf",
+    "file_path": "/home/ebi/Downloads/2月DONE/0217インス・佐藤21枚_Part6@.pdf",
+    "backend": "claude-sonnet-4-6",
+    "truth_known": true,
+    "extracted_slip_number": "S260206-6",
+    "extracted_date": "2026/02/17",
+    "extracted_items_count": 28,
+    "extracted_quantity_sum": 281,
+    "extracted_items_sum": 1573600,
+    "extracted_subtotal": 1573600,
+    "extracted_total": 1730960,
+    "subtotal_vs_items_diff": 0,
+    "truth_slip_number": "S260206-6",
+    "truth_date": "2026/02/17",
+    "truth_items_count": 28,
+    "truth_quantity_sum": 281,
+    "truth_subtotal": 1573600,
+    "diff_items": 0,
+    "diff_quantity": 0,
+    "diff_amount": 0,
+    "pass_status": "PASS",
+    "error": "",
+    "notes": "+2枚 / +¥11,200 過大請求検出済み（重複1行 + 抜け1行）",
+    "extracted_items": [
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 4,
+        "unit_price": 5600,
+        "amount": 22400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 16,
+        "unit_price": 5600,
+        "amount": 89600
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 6,
+        "unit_price": 5600,
+        "amount": 33600
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 2,
+        "unit_price": 5600,
+        "amount": 11200
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 4,
+        "unit_price": 5600,
+        "amount": 22400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 14,
+        "unit_price": 5600,
+        "amount": 78400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 21,
+        "unit_price": 5600,
+        "amount": 117600
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 18,
+        "unit_price": 5600,
+        "amount": 100800
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 11,
+        "unit_price": 5600,
+        "amount": 61600
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 3,
+        "unit_price": 5600,
+        "amount": 16800
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 9,
+        "unit_price": 5600,
+        "amount": 50400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 9,
+        "unit_price": 5600,
+        "amount": 50400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 7,
+        "unit_price": 5600,
+        "amount": 39200
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 7,
+        "unit_price": 5600,
+        "amount": 39200
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 7,
+        "unit_price": 5600,
+        "amount": 39200
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 14,
+        "unit_price": 5600,
+        "amount": 78400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 14,
+        "unit_price": 5600,
+        "amount": 78400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 9,
+        "unit_price": 5600,
+        "amount": 50400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 9,
+        "unit_price": 5600,
+        "amount": 50400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 14,
+        "unit_price": 5600,
+        "amount": 78400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 19,
+        "unit_price": 5600,
+        "amount": 106400
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 17,
+        "unit_price": 5600,
+        "amount": 95200
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 10,
+        "unit_price": 5600,
+        "amount": 56000
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 5,
+        "unit_price": 5600,
+        "amount": 28000
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 5,
+        "unit_price": 5600,
+        "amount": 28000
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 16,
+        "unit_price": 5600,
+        "amount": 89600
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 7,
+        "unit_price": 5600,
+        "amount": 39200
+      },
+      {
+        "product_code": "WT26038AD/489",
+        "product_name": "ELASTIC NYLON PRINT LAX PT",
+        "quantity": 4,
+        "unit_price": 5600,
+        "amount": 22400
+      }
+    ]
+  }
+]

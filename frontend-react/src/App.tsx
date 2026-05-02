@@ -6,6 +6,7 @@ import { PurchasePage } from './pages/PurchasePage';
 import { PurchaseMonthlyPage } from './pages/PurchaseMonthlyPage';
 import { PurchasePaymentPage } from './pages/PurchasePaymentPage';
 import { PaymentPage } from './pages/PaymentPage';
+import { BillingLedgerPage } from './pages/BillingLedgerPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ReconciliationPage } from './pages/ReconciliationPage';
 
@@ -25,6 +26,7 @@ function App() {
           <Route path="/purchase-monthly" element={<PurchaseMonthlyPage />} />
           <Route path="/purchase-payment" element={<PurchasePaymentPage />} />
           <Route path="/payment" element={<PaymentPage />} />
+          <Route path="/billing-ledger" element={<BillingLedgerPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/reconciliation" element={<ReconciliationPage />} />
         </Routes>

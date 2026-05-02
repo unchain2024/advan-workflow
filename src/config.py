@@ -75,3 +75,11 @@ PDF_FONT_PATH = os.getenv("PDF_FONT_PATH", str(BASE_DIR / "fonts" / "ipaexg.ttf"
 # Gemini API設定
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")  # 構造化抽出用（最新）
+
+# Anthropic Claude API設定
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+
+# 抽出器バックエンド ("claude" | "gemini")。未設定なら "claude" がデフォルト
+# .env で EXTRACTOR_BACKEND=claude or gemini と書けば切替可能
+EXTRACTOR_BACKEND = os.getenv("EXTRACTOR_BACKEND", "claude")

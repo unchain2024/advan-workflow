@@ -478,3 +478,144 @@ async def update_delivery_note(note_id: int, request: UpdateDeliveryNoteRequest)
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- 売上入金管理 (消滅・繰越) エンドポイント ---
+
+
+class PaymentRequest(BaseModel):
+    company_name: str
+    year_month: str  # "YYYY年M月"
+    payment_amount: int
+    opening_balance: Optional[int] = None
+    note: Optional[str] = None
+    sync_sheet: bool = True  # シートにもミラー書き込み
+
+
+class PaymentResponse(BaseModel):
+    id: int
+    company_name: str
+    year_month: str
+    payment_amount: int
+    opening_balance: int
+    note: str
+    sheet_synced: bool = False
+    sheet_error: str = ""
+
+
+class LedgerEntryResponse(BaseModel):
+    year_month: str
+    previous_balance: int
+    opening_balance: int
+    subtotal: int
+    tax: int
+    payment_amount: int
+    carried_over: int
+    notes_count: int
+
+
+class CompanyLedgerResponse(BaseModel):
+    company_name: str
+    entries: list[LedgerEntryResponse]
+
+
+@router.get("/payments")
+async def get_payments(
+    company_name: str = Query("", description="会社名（空=全件）"),
+    year_month: str = Query("", description="年月（空=全件）"),
+):
+    """消滅（入金）エントリ一覧を取得"""
+    try:
+        db = MonthlyItemsDB()
+        items = db.list_payments(
+            company_name=company_name or None,
+            year_month=year_month or None,
+        )
+        return {"payments": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/payments", response_model=PaymentResponse)
+async def upsert_payment(request: PaymentRequest):
+    """消滅を登録/更新（DB + シート dual-write）
+
+    - DB: monthly_payments テーブルに upsert
+    - シート: sync_sheet=true の場合、売上集計表の消滅セルに書き込み（best-effort）
+    """
+    try:
+        db = MonthlyItemsDB()
+
+        # 会社名を正規化（シート基準に合わせる）
+        sheets_client = GoogleSheetsClient()
+        target_year = _extract_year_from_year_month(request.year_month)
+        canonical = sheets_client.get_canonical_company_name(
+            request.company_name, year=target_year
+        )
+        company_name = canonical or request.company_name
+
+        saved = db.upsert_payment(
+            company_name=company_name,
+            year_month=request.year_month,
+            payment_amount=request.payment_amount,
+            opening_balance=request.opening_balance,
+            note=request.note,
+        )
+        entry = db.get_payment(company_name, request.year_month)
+
+        sheet_synced = False
+        sheet_error = ""
+        if request.sync_sheet:
+            try:
+                sheet = sheets_client._get_billing_sheet_by_year(target_year)
+                row1_values = sheet.row_values(1)
+                month_col_index = None
+                for i, cell_value in enumerate(row1_values):
+                    if request.year_month in str(cell_value):
+                        month_col_index = i + 1
+                        break
+                if month_col_index is None:
+                    raise ValueError(f"年月 '{request.year_month}' がシートにありません")
+                col_a_values = sheet.col_values(1)
+                company_row = _find_company_row(company_name, col_a_values, start_row=3)
+                if company_row is None:
+                    raise ValueError(f"会社 '{company_name}' がシートにありません")
+                shoumetsu_col = month_col_index + 2  # 消滅列
+                sheet.update_cell(company_row, shoumetsu_col, request.payment_amount)
+                sheet_synced = True
+            except Exception as se:
+                sheet_error = str(se)
+                print(f"    シート書込エラー（DB書込は成功）: {se}")
+
+        return PaymentResponse(
+            id=saved["id"],
+            company_name=company_name,
+            year_month=request.year_month,
+            payment_amount=entry["payment_amount"],
+            opening_balance=entry["opening_balance"],
+            note=entry["note"],
+            sheet_synced=sheet_synced,
+            sheet_error=sheet_error,
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/billing-ledger", response_model=CompanyLedgerResponse)
+async def get_billing_ledger(
+    company_name: str = Query(...),
+    year: int = Query(..., ge=2020, le=2099),
+):
+    """指定会社・年の12ヶ月分の台帳をDBから計算して返す"""
+    try:
+        db = MonthlyItemsDB()
+        entries = []
+        for month in range(1, 13):
+            ym = f"{year}年{month}月"
+            ledger = db.compute_ledger(company_name, ym)
+            entries.append(LedgerEntryResponse(**ledger))
+        return CompanyLedgerResponse(company_name=company_name, entries=entries)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

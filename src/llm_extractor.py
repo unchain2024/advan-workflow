@@ -41,12 +41,17 @@ EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情
    - **通常の納品書の場合**（宛先がアドバンアパレル以外）:
      * 宛先（受取先）の会社名を抽出
      * 「御中」の**直前**または**近くに**記載されている会社名
-   - **返品伝票の場合**（宛先がアドバンアパレル）:
-     * 宛先が「ADVANAPPAREL」「アドバンアパレル」の場合、それは自社なので **発行元の会社名を抽出** する
-     * 例: 返品伝票で「ADVANAPPAREL CO.LTD. 御中」と書かれている場合、発行元（差出人）の会社名を company_name とする
+   - **宛先がアドバンアパレル/ADVANAPPAREL の場合** （返品伝票・納品依頼書・発注書・BJL納品書等）:
+     * アドバンアパレルは自社なので、**発行元（差出人）の会社名を company_name とする**
+     * 該当例：
+       - 返品伝票: "ADVANAPPAREL CO.LTD. 御中" → 発行元（例: 株式会社アダストリア）を抽出
+       - JUN等の納品依頼書: "*アドバンアパレル株式会社 御中" → 発行元（例: ㈱ジュン）を抽出
+       - バロックBJL納品書: 宛先がアドバンアパレル → 発行元（例: 株式会社バロックジャパンリミテッド）を抽出
+     * 発行元会社名はページ上部・下部・脇など、書類上のどこにあっても構わない
    - **除外すべきもの（絶対に抽出してはいけない）**:
      * **「アドバンアパレル」「ADVANAPPAREL」を含む会社名は絶対に除外**（これは自社名です）
    - company_name から「御中」「様」「殿」は除去すること
+   - **必須**: company_name は決して空文字 ("") にしない。書類上に明らかに会社名が見える限り、必ず抽出する
 
 3. **slip_number**: 伝票番号または納品書番号
    - 「納品伝票番号」「伝票番号」などのラベルの後の番号
@@ -65,8 +70,14 @@ EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情
      * **バロック（BJL納品書）の場合**: 「PO No.」ではなく「Style No.」を product_code として抽出すること
    - **product_name**: 品名・商品名
    - **quantity**: 数量（数値）
+     * **重要**: PDFの該当セルに「-1」「-2」のように **負号(マイナス記号)が明示されている** 場合は、その通り **負の数値** で出力すること（例: -1, -2）
+     * 返品伝票（is_return=true）でも、PDFに正の数として記載されていればそのまま正の数で出力（後段で自動変換される）
    - **unit_price**: 単価（数値）
+     * **重要1（ヘッダ単価の継承）**: 明細表のヘッダ部分や上部に「単価 7,600」「@2,950円」などと書かれていて、明細行の単価列が空白の場合、**ヘッダの単価を各明細行の unit_price として適用**すること（例: JUN・アダストリアの納品依頼書形式）
+     * **重要2（手書き単価の認識）**: バロック（BJL納品書）など、明細表の単価列が空白で、ページ内に **手書きで「@2,040円」「2,500円」「1,680円」のような単価表記**（青ペンや赤ペン含む）がある場合、その手書き数字を unit_price として使うこと。手書き表記が「@xxxx円」の場合の xxxx 部分が単価
+     * **重要3**: 単価がどこにも記載されていない場合は、`amount / quantity` で逆算して unit_price とすること
    - **amount**: 金額（数値）
+     * 明細行に金額が記載されていなければ `quantity × unit_price` で計算した値を出力すること
 
 ## 典型的な納品書のレイアウト
 
@@ -95,6 +106,7 @@ EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情
 - **「アドバンアパレル」を含む会社名は絶対に抽出しない**（発行元の会社名）
 - テキスト上部に現れる会社名が宛先の可能性が高い
 - **絶対に推測・補完をしないこと**: 画像から読み取れない文字や数値は必ず null にすること。存在しないデータを作り上げてはいけない。画像に明確に記載されている情報のみを抽出すること。
+- **ただし unit_price は例外**: 単価列が空白でも、(a) 同じページのヘッダや手書きで単価が示されている場合、(b) `amount / quantity` で逆算できる場合は unit_price を埋めること。これは「画像に記載されている情報の正規化」であり推測ではない
 
 ## 出力形式
 
@@ -155,7 +167,7 @@ class LLMExtractor:
         print(f"  PDF → {len(images)} ページの画像に変換")
 
         # Geminiに直接画像を送信して構造化抽出（リトライ付き）
-        max_retries = 3
+        max_retries = 6
         extracted = None
         for attempt in range(1, max_retries + 1):
             print(f"\n=== Gemini APIに画像を直接送信中 (試行 {attempt}/{max_retries}) ===")
@@ -166,7 +178,7 @@ class LLMExtractor:
             print(f"  ⚠️ 試行 {attempt} 失敗、{'リトライします...' if attempt < max_retries else '全試行失敗'}")
 
         if not extracted:
-            raise ValueError("データの抽出に失敗しました（3回リトライ後）")
+            raise ValueError(f"データの抽出に失敗しました（{max_retries}回リトライ後）")
 
         # Geminiがリスト（複数納品書）を返した場合、1つにマージ
         if isinstance(extracted, list):
@@ -298,9 +310,28 @@ class LLMExtractor:
             print(f"レスポンス: {response_text[:500]}")
             return None
         except Exception as e:
+            err_str = str(e)
             print(f"Gemini API エラー: {e}")
-            import traceback
-            traceback.print_exc()
+            # 429 レート制限の場合は retryDelay を尊重して待機
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                import re as _re
+                import time as _time
+                delay = None
+                m = _re.search(r"'retryDelay':\s*'(\d+(?:\.\d+)?)s'", err_str)
+                if m:
+                    delay = float(m.group(1))
+                else:
+                    m = _re.search(r"retry in ([\d.]+)s", err_str)
+                    if m:
+                        delay = float(m.group(1))
+                if delay is None or delay < 1:
+                    delay = 60.0
+                delay = min(delay + 2, 120)  # 念のため+2秒、最大120秒
+                print(f"  🕒 レート制限検知: {delay:.1f}秒待機...")
+                _time.sleep(delay)
+            else:
+                import traceback
+                traceback.print_exc()
             return None
 
     def _to_delivery_note(self, data: dict, items_data: list) -> DeliveryNote:
@@ -311,16 +342,20 @@ class LLMExtractor:
         items = []
         for item in items_data:
             amount = int(item.get("amount", 0) or 0)
-            # 返品の場合、金額を強制的にマイナスに
-            if is_return and amount > 0:
-                amount = -amount
+            quantity = int(item.get("quantity", 0) or 0)
+            # 返品の場合、数量・金額を強制的にマイナスに
+            if is_return:
+                if amount > 0:
+                    amount = -amount
+                if quantity > 0:
+                    quantity = -quantity
 
             items.append(
                 DeliveryItem(
                     slip_number=str(item.get("slip_number", "")),
                     product_code=str(item.get("product_code", "")),
                     product_name=str(item.get("product_name", "")),
-                    quantity=int(item.get("quantity", 0) or 0),
+                    quantity=quantity,
                     unit_price=int(item.get("unit_price", 0) or 0),
                     amount=amount,
                 )

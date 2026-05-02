@@ -1,0 +1,135 @@
+{
+  "rows": [
+    {
+      "file": "0212インス・佐藤1枚（返品）.pdf",
+      "pages": 1,
+      "gemini": {
+        "input_tokens": 2603,
+        "output_tokens": 264,
+        "total_tokens": 7556,
+        "elapsed_sec": 24.76,
+        "pages": 1,
+        "cost_usd": 0.0020935
+      },
+      "claude": {
+        "input_tokens": 3465,
+        "output_tokens": 261,
+        "total_tokens": 3726,
+        "elapsed_sec": 4.29,
+        "pages": 1,
+        "cost_usd": 0.014310000000000002
+      },
+      "ratio_claude_over_gemini": 6.835443037974684
+    },
+    {
+      "file": "0213インス・佐藤1枚（2026）.pdf",
+      "pages": 1,
+      "gemini": {
+        "input_tokens": 2603,
+        "output_tokens": 427,
+        "total_tokens": 6497,
+        "elapsed_sec": 17.86,
+        "pages": 1,
+        "cost_usd": 0.0025824999999999997
+      },
+      "claude": {
+        "input_tokens": 3465,
+        "output_tokens": 409,
+        "total_tokens": 3874,
+        "elapsed_sec": 5.09,
+        "pages": 1,
+        "cost_usd": 0.016530000000000003
+      },
+      "ratio_claude_over_gemini": 6.400774443368831
+    },
+    {
+      "file": "0217インス・佐藤21枚_Part2@.pdf",
+      "pages": 1,
+      "gemini": {
+        "input_tokens": 2603,
+        "output_tokens": 2238,
+        "total_tokens": 10861,
+        "elapsed_sec": 32.38,
+        "pages": 1,
+        "cost_usd": 0.0080155
+      },
+      "claude": {
+        "input_tokens": 3465,
+        "output_tokens": 2154,
+        "total_tokens": 5619,
+        "elapsed_sec": 21.48,
+        "pages": 1,
+        "cost_usd": 0.042705
+      },
+      "ratio_claude_over_gemini": 5.3278023828831635
+    },
+    {
+      "file": "0217インス・佐藤21枚_Part4@.pdf",
+      "pages": 1,
+      "gemini": {
+        "input_tokens": 2603,
+        "output_tokens": 1853,
+        "total_tokens": 14752,
+        "elapsed_sec": 49.28,
+        "pages": 1,
+        "cost_usd": 0.006860499999999999
+      },
+      "claude": {
+        "input_tokens": 3465,
+        "output_tokens": 2223,
+        "total_tokens": 5688,
+        "elapsed_sec": 21.96,
+        "pages": 1,
+        "cost_usd": 0.04374
+      },
+      "ratio_claude_over_gemini": 6.375628598498652
+    },
+    {
+      "file": "0217インス・佐藤21枚_Part6@.pdf",
+      "pages": 1,
+      "gemini": {
+        "input_tokens": 2603,
+        "output_tokens": 2656,
+        "total_tokens": 10249,
+        "elapsed_sec": 27.04,
+        "pages": 1,
+        "cost_usd": 0.0092695
+      },
+      "claude": {
+        "input_tokens": 3465,
+        "output_tokens": 2405,
+        "total_tokens": 5870,
+        "elapsed_sec": 18.12,
+        "pages": 1,
+        "cost_usd": 0.046470000000000004
+      },
+      "ratio_claude_over_gemini": 5.013215383785534
+    }
+  ],
+  "totals": {
+    "gemini": {
+      "input": 13015,
+      "output": 7438,
+      "cost_usd": 0.0288215
+    },
+    "claude": {
+      "input": 17325,
+      "output": 7452,
+      "cost_usd": 0.163755
+    }
+  },
+  "averages_per_file": {
+    "gemini_usd": 0.0057643,
+    "claude_usd": 0.032751
+  },
+  "pricing_used": {
+    "gemini-3-flash-preview": {
+      "input": 0.5,
+      "output": 3.0
+    },
+    "claude-sonnet-4-6": {
+      "input": 3.0,
+      "output": 15.0
+    }
+  }
+}

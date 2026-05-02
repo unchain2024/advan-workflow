@@ -287,3 +287,61 @@ export const updateDeliveryNote = async (
   });
   return response.data;
 };
+
+// --- 売上入金管理 (新設) ---
+
+export interface LedgerEntry {
+  year_month: string;
+  previous_balance: number;
+  opening_balance: number;
+  subtotal: number;
+  tax: number;
+  payment_amount: number;
+  carried_over: number;
+  notes_count: number;
+}
+
+export interface CompanyLedgerResponse {
+  company_name: string;
+  entries: LedgerEntry[];
+}
+
+export interface PaymentResponse {
+  id: number;
+  company_name: string;
+  year_month: string;
+  payment_amount: number;
+  opening_balance: number;
+  note: string;
+  sheet_synced: boolean;
+  sheet_error: string;
+}
+
+export const getBillingLedger = async (
+  companyName: string,
+  year: number
+): Promise<CompanyLedgerResponse> => {
+  const response = await apiClient.get<CompanyLedgerResponse>('/billing-ledger', {
+    params: { company_name: companyName, year },
+  });
+  return response.data;
+};
+
+export const upsertBillingPayment = async (
+  companyName: string,
+  yearMonth: string,
+  paymentAmount: number,
+  openingBalance?: number,
+  note?: string,
+  syncSheet: boolean = true
+): Promise<PaymentResponse> => {
+  const response = await apiClient.post<PaymentResponse>('/payments', {
+    company_name: companyName,
+    year_month: yearMonth,
+    payment_amount: paymentAmount,
+    opening_balance: openingBalance,
+    note,
+    sync_sheet: syncSheet,
+  });
+  return response.data;
+};

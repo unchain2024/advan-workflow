@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .config import INPUT_DIR, OUTPUT_DIR
 from .invoice_generator import InvoiceGenerator
-from .llm_extractor import LLMExtractor
+from .extractor import UnifiedExtractor
 from .sheets_client import GoogleSheetsClient
 
 
@@ -53,10 +53,10 @@ def process_delivery_note(pdf_path: Path, dry_run: bool = False) -> Path:
     """
     print(f"処理中: {pdf_path}")
 
-    # 1. LLMで画像からデータ抽出
+    # 1. LLMで画像からデータ抽出 (Claude/Gemini を EXTRACTOR_BACKEND env で切替可能)
     print("  - 納品書PDFを画像として読み取り中...")
-    print("  - Claude Vision APIでOCR+構造化抽出中...")
-    extractor = LLMExtractor()
+    extractor = UnifiedExtractor()
+    print(f"  - Vision APIでOCR+構造化抽出中... (backend={extractor.backend_name})")
     delivery_note = extractor.extract(pdf_path)
 
     print(f"    会社名: {delivery_note.company_name}")
