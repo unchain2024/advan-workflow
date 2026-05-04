@@ -106,6 +106,12 @@ class PurchaseTableResponse(BaseModel):
     data: list[list[str]]
 
 
+class SyncPurchaseSheetsResponse(BaseModel):
+    synced_count: int
+    failed: list[str]
+    message: str
+
+
 class PurchaseMonthlyItem(BaseModel):
     id: int
     slip_number: str
@@ -315,17 +321,36 @@ async def save_purchase(request: SavePurchaseRequest):
         )
 
         # 7. Layer 2: シート書込（DB成功後にbest-effort、失敗しても DB は保持）
-        sheet_errors = []
-        for pi in purchase_invoices:
+        # Phase 2: per-note 加算ではなく、DB集計値で「上書き」する（再保存で 2倍/3倍にならない）
+        # 仕入シートは課税/非課税で別行 → 該当する側のみ 1 回ずつ書込
+        sheet_errors: list[str] = []
+        agg = db.get_purchase_amounts(company_name, year_month_str)
+
+        if agg["taxable_subtotal"] > 0 or any(pi.is_taxable for pi in purchase_invoices):
             try:
                 sheets_client.save_purchase_record(
                     supplier_name=company_name,
                     target_year_month=year_month_str,
-                    purchase_invoice=pi,
+                    subtotal=agg["taxable_subtotal"],
+                    tax=agg["taxable_tax"],
+                    is_taxable=True,
                 )
             except Exception as sheet_err:
-                sheet_errors.append(f"{pi.slip_number}: {sheet_err}")
-                print(f"    [SHEET_WRITE] 仕入シート書込エラー（続行）: {sheet_err}")
+                sheet_errors.append(f"課税: {sheet_err}")
+                print(f"    [SHEET_WRITE] 仕入シート（課税）上書きエラー（DB保持）: {sheet_err}")
+
+        if agg["nontaxable_subtotal"] > 0 or any(not pi.is_taxable for pi in purchase_invoices):
+            try:
+                sheets_client.save_purchase_record(
+                    supplier_name=company_name,
+                    target_year_month=year_month_str,
+                    subtotal=agg["nontaxable_subtotal"],
+                    tax=agg["nontaxable_tax"],
+                    is_taxable=False,
+                )
+            except Exception as sheet_err:
+                sheet_errors.append(f"非課税: {sheet_err}")
+                print(f"    [SHEET_WRITE] 仕入シート（非課税）上書きエラー（DB保持）: {sheet_err}")
 
         if sheet_errors:
             message = (
@@ -409,6 +434,56 @@ async def update_purchase_payment(request: UpdatePurchasePaymentRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+@router.post("/sync-purchase-sheets-from-db", response_model=SyncPurchaseSheetsResponse)
+async def sync_purchase_sheets_from_db():
+    """DB の集計値で仕入シートを上書き同期（Phase 2: DB-as-truth 強制再同期）
+
+    purchase_invoices に存在する全 (仕入先, 年月) について、課税/非課税別の発生・消費税
+    を仕入シートの該当セルに上書きする。
+    """
+    try:
+        db = MonthlyItemsDB()
+        sheets_client = GoogleSheetsClient()
+        totals = db.get_all_purchase_monthly_totals()
+        synced = 0
+        failed: list[str] = []
+        for item in totals:
+            company = item["company_name"]
+            ym = item["year_month"]
+            if item["taxable_subtotal"] > 0:
+                try:
+                    sheets_client.save_purchase_record(
+                        supplier_name=company,
+                        target_year_month=ym,
+                        subtotal=item["taxable_subtotal"],
+                        tax=item["taxable_tax"],
+                        is_taxable=True,
+                    )
+                    synced += 1
+                except Exception as e:
+                    failed.append(f"{company} {ym} (課税): {e}")
+            if item["nontaxable_subtotal"] > 0:
+                try:
+                    sheets_client.save_purchase_record(
+                        supplier_name=company,
+                        target_year_month=ym,
+                        subtotal=item["nontaxable_subtotal"],
+                        tax=item["nontaxable_tax"],
+                        is_taxable=False,
+                    )
+                    synced += 1
+                except Exception as e:
+                    failed.append(f"{company} {ym} (非課税): {e}")
+        message = (
+            f"仕入 DB → シート同期完了: 成功 {synced} 件" +
+            (f"、失敗 {len(failed)} 件" if failed else "")
+        )
+        return SyncPurchaseSheetsResponse(synced_count=synced, failed=failed, message=message)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/purchase-companies-and-months", response_model=PurchaseCompaniesAndMonthsResponse)

@@ -110,12 +110,19 @@ def process_delivery_note(pdf_path: Path, dry_run: bool = False) -> Path:
     print(f"    出力: {invoice_path}")
 
     # 4. 売上集計表に保存
+    # 注意: CLI 経路は DB を介さず単一 PDF の値を直接シートへ書く（Phase 2 後は集計値が望ましい）
     if not dry_run:
         print("  - 売上集計表に保存中...")
+        target_ym = (
+            sheets_client._parse_year_month(delivery_note.date)
+            if delivery_note.date
+            else ""
+        )
         sheets_client.save_billing_record(
             company_name=delivery_note.company_name,
-            previous_billing=previous_billing,
-            delivery_note=delivery_note,
+            target_year_month=target_ym,
+            subtotal=delivery_note.subtotal,
+            tax=delivery_note.tax,
         )
     else:
         print("  - [DRY RUN] 売上集計表への保存をスキップ")

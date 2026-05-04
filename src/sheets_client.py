@@ -473,111 +473,51 @@ class GoogleSheetsClient:
             sheet.append_rows(rows, value_input_option="USER_ENTERED")
 
     def get_previous_billing(self, company_name: str, current_year_month: Optional[str] = None) -> PreviousBilling:
-        """先月の請求情報を売上集計表から取得
+        """前月の請求情報を DB から計算（Phase 2: シート読み廃止）
+
+        DB-as-truth に従い、シートではなく DB の monthly_invoices / monthly_payments を集計する。
+        シートが消えてもPDF印字で正しい前月情報が出る。
 
         Args:
-            company_name: 会社名
-            current_year_month: 現在の年月（YYYY-MM形式）、Noneの場合は今月
+            company_name: canonical 会社名
+            current_year_month: 現在の年月（"YYYY-MM" or "YYYY年M月" or None=今月）
 
         Returns:
-            PreviousBilling: 前月の請求情報
+            PreviousBilling: 前月残高・当月入金・当月発生・当月消費税
         """
         try:
-            # 前月を計算
+            # current_year_month を "YYYY年M月" 形式に正規化
             if current_year_month:
-                year, month = map(int, current_year_month.split('-'))
+                if '-' in current_year_month and '年' not in current_year_month:
+                    year, month = map(int, current_year_month.split('-'))
+                else:
+                    m = re.match(r'(\d+)年(\d+)月', current_year_month)
+                    if m:
+                        year, month = int(m.group(1)), int(m.group(2))
+                    else:
+                        today = datetime.now()
+                        year, month = today.year, today.month
             else:
                 today = datetime.now()
                 year, month = today.year, today.month
 
-            if month == 1:
-                prev_year, prev_month = year - 1, 12
-            else:
-                prev_year, prev_month = year, month - 1
+            current_ym_jp = f"{year}年{month}月"
 
-            # 年月フォーマット
-            prev_year_month = f"{prev_year}年{prev_month}月"
-            current_year_month_str = f"{year}年{month}月"
+            # DB から ledger を計算
+            from .database import MonthlyItemsDB
+            db = MonthlyItemsDB()
+            ledger = db.compute_ledger(company_name, current_ym_jp)
 
-            # 年に基づいてシートを取得
-            current_sheet = self._get_billing_sheet_by_year(year)
-
-            # 前月が前年の場合は別のシートを取得
-            if prev_year != year:
-                prev_sheet = self._get_billing_sheet_by_year(prev_year)
-            else:
-                prev_sheet = current_sheet
-
-            # 1. 会社の行を検索（今月のシートで）
-            col_a_values = current_sheet.col_values(1)
-            company_row = _find_company_row(company_name, col_a_values, start_row=3)
-
-            if company_row is None:
-                print(f"    会社 '{company_name}' が売上集計表に見つかりません")
-                return PreviousBilling(0, 0, 0, 0, 0, 0)
-
-            # 2. 前月の列を検索（前月のシートで）
-            prev_row1_values = prev_sheet.row_values(1)
-            prev_month_col = None
-            for i, cell_value in enumerate(prev_row1_values):
-                if prev_year_month in str(cell_value):
-                    prev_month_col = i + 1
-                    break
-
-            # 前月が別シートの場合、会社の行を再検索
-            prev_company_row = company_row
-            if prev_year != year:
-                prev_col_a = prev_sheet.col_values(1)
-                prev_company_row = _find_company_row(company_name, prev_col_a, start_row=3)
-
-            # 3. 今月の列を検索（今月のシートで）
-            current_row1_values = current_sheet.row_values(1)
-            current_month_col = None
-            for i, cell_value in enumerate(current_row1_values):
-                if current_year_month_str in str(cell_value):
-                    current_month_col = i + 1
-                    break
-
-            # 4. 値を取得（モジュールレベルの parse_amount を使用）
-
-            # 前回御請求額 = 前月の残高
-            previous_amount = 0
-            if prev_month_col and prev_company_row:
-                zandaka_col = prev_month_col + 3  # 残高は年月列+3
-                prev_zandaka = prev_sheet.cell(prev_company_row, zandaka_col).value or ""
-                previous_amount = parse_amount(prev_zandaka)
-
-            # 御入金額 = 今月の消滅（入金額）
-            payment_received = 0
-            sales_amount = 0
-            tax_amount = 0
-            if current_month_col:
-                shoumetsu_col = current_month_col + 2  # 消滅は年月列+2
-                current_shoumetsu = current_sheet.cell(company_row, shoumetsu_col).value or ""
-                payment_received = parse_amount(current_shoumetsu)
-
-                # 今月の既存「発生」「消費税」を読み取り
-                from gspread.utils import ValueRenderOption, rowcol_to_a1
-                hassei_raw = current_sheet.get(
-                    rowcol_to_a1(company_row, current_month_col),
-                    value_render_option=ValueRenderOption.unformatted,
-                )
-                tax_raw = current_sheet.get(
-                    rowcol_to_a1(company_row, current_month_col + 1),
-                    value_render_option=ValueRenderOption.unformatted,
-                )
-                hassei_val = hassei_raw[0][0] if hassei_raw and hassei_raw[0] else 0
-                tax_val = tax_raw[0][0] if tax_raw and tax_raw[0] else 0
-                sales_amount = parse_amount(hassei_val)
-                tax_amount = parse_amount(tax_val)
-
-            # 差引繰越残高 = 前回御請求額 - 御入金額
+            previous_amount = ledger["previous_balance"]
+            payment_received = ledger["payment_amount"]
+            sales_amount = ledger["subtotal"]
+            tax_amount = ledger["tax"]
             carried_over = previous_amount - payment_received
 
-            print(f"    前月({prev_year_month})残高: ¥{previous_amount:,}")
-            print(f"    今月({current_year_month_str})消滅（入金額）: ¥{payment_received:,}")
-            print(f"    差引繰越残高: ¥{carried_over:,}")
-            print(f"    今月既存: 発生 ¥{sales_amount:,}, 消費税 ¥{tax_amount:,}")
+            print(f"    [DB] 前月残高: ¥{previous_amount:,}")
+            print(f"    [DB] 当月({current_ym_jp})消滅（入金額）: ¥{payment_received:,}")
+            print(f"    [DB] 差引繰越残高: ¥{carried_over:,}")
+            print(f"    [DB] 当月発生: ¥{sales_amount:,}, 消費税: ¥{tax_amount:,}")
 
             return PreviousBilling(
                 previous_amount=previous_amount,
@@ -589,7 +529,7 @@ class GoogleSheetsClient:
             )
 
         except Exception as e:
-            print(f"    売上集計表の読み取りエラー: {e}")
+            print(f"    [DB] previous_billing 計算エラー: {e}")
             import traceback
             traceback.print_exc()
             return PreviousBilling(0, 0, 0, 0, 0, 0)
@@ -626,38 +566,36 @@ class GoogleSheetsClient:
     def save_billing_record(
         self,
         company_name: str,
-        previous_billing: PreviousBilling,
-        delivery_note: DeliveryNote,
-        target_year_month: str = "",
+        target_year_month: str,
+        subtotal: int,
+        tax: int,
+        previous_billing: Optional[PreviousBilling] = None,  # 後方互換のため残置（未使用）
     ):
-        """請求管理スプレッドシートの既存セルを更新
+        """売上集計シートの (会社, 年月) 行に発生・消費税の絶対値を書き込む
+
+        Phase 2 (DB-as-truth): 加算ではなく上書き。caller は DB 集計値を渡す。
+        再保存で 2倍/3倍になる旧バグはこの関数では発生しない。
 
         スプレッドシート構造:
         - Row 1: 年月ヘッダー（2026年1月、2026年2月...）が4列ごとに配置
         - Row 2: カラムラベル（相手方、発生、消費税、消滅、残高）が繰り返し
         - Row 3+: 会社データ
 
-        処理:
-        1. ユーザー選択の年月（target_year_month）を使用。未指定なら日付から算出
-        2. Row 1から該当する年月の列を検索
-        3. Column Aから会社名（正規化して一致）の行を検索
-        4. 「発生」と「消費税」のセルを更新
-
         Args:
-            target_year_month: ユーザー選択の年月（"YYYY年M月"形式）。
-                               指定すると納品書日付に関わらずこの年月の列に書き込む。
+            company_name: canonical な会社名（既にシートに登録されているもの）
+            target_year_month: 年月（"YYYY年M月"形式、必須）
+            subtotal: DB 集計の当月発生合計（絶対値）
+            tax: DB 集計の当月消費税合計（絶対値）
+            previous_billing: 後方互換のため残置（未使用、Phase 2 完了後に削除予定）
         """
-        # 1. 年月を決定（ユーザー選択優先、未指定なら日付から算出）
-        if target_year_month:
-            year_month = target_year_month
-            year_match = re.match(r'(\d{4})', target_year_month)
-            target_year = int(year_match.group(1)) if year_match else int(delivery_note.date.split('/')[0])
-        else:
-            year_month = self._parse_year_month(delivery_note.date)
-            if not year_month:
-                print(f"    エラー: 日付のパースに失敗しました: {delivery_note.date}")
-                return
-            target_year = int(delivery_note.date.split('/')[0])
+        if not target_year_month:
+            raise ValueError("target_year_month は必須です")
+
+        year_month = target_year_month
+        year_match = re.match(r'(\d{4})', target_year_month)
+        if not year_match:
+            raise ValueError(f"target_year_month のパース失敗: {target_year_month}")
+        target_year = int(year_match.group(1))
 
         sheet = self._get_billing_sheet_by_year(target_year)
 
@@ -710,42 +648,12 @@ class GoogleSheetsClient:
             print(f"    利用可能な会社: {[normalize_company_name(v) for v in col_a_values[2:10]]}")
             return
 
-        # 5. 現在の値を読み取り、加算する
+        # 5. 絶対値（DB集計値）を書き込む（Phase 2: 加算撤廃）
         # 注意: 消滅（入金額）は手動入力、残高は数式で自動計算されるため更新しない
-        # UNFORMATTED_VALUE で生の数値を取得（書式による解析失敗を防ぐ）
-        from gspread.utils import ValueRenderOption, rowcol_to_a1
-        hassei_raw = sheet.get(
-            rowcol_to_a1(company_row, hassei_col),
-            value_render_option=ValueRenderOption.unformatted,
-        )
-        tax_raw = sheet.get(
-            rowcol_to_a1(company_row, tax_col),
-            value_render_option=ValueRenderOption.unformatted,
-        )
-        # get() は [[value]] 形式で返す。空セルは [[]] or []
-        current_hassei_val = hassei_raw[0][0] if hassei_raw and hassei_raw[0] else 0
-        current_tax_val = tax_raw[0][0] if tax_raw and tax_raw[0] else 0
-
-        print(f"    [DEBUG] セル読み取り: 発生=({company_row}, {hassei_col}) raw={current_hassei_val!r} (type={type(current_hassei_val).__name__})")
-        print(f"    [DEBUG] セル読み取り: 消費税=({company_row}, {tax_col}) raw={current_tax_val!r} (type={type(current_tax_val).__name__})")
-        print(f"    [DEBUG] delivery_note.date='{delivery_note.date}', year_month='{year_month}'")
-
-        current_hassei = parse_amount(current_hassei_val)
-        current_tax = parse_amount(current_tax_val)
-
-        # 新しい値を加算
-        new_hassei = current_hassei + delivery_note.subtotal
-        new_tax = current_tax + delivery_note.tax
-
-        print(f"    更新: 行 {company_row}, 列 {hassei_col}(発生), {tax_col}(消費税)")
-        print(f"    既存: 発生 ¥{current_hassei:,}, 消費税 ¥{current_tax:,}")
-        print(f"    追加: 発生 ¥{delivery_note.subtotal:,}, 消費税 ¥{delivery_note.tax:,}")
-        print(f"    合計: 発生 ¥{new_hassei:,}, 消費税 ¥{new_tax:,}")
+        print(f"    [SHEET_WRITE] 上書き: 行 {company_row}, 列 {hassei_col}(発生)={subtotal:,}, {tax_col}(消費税)={tax:,}")
         print(f"    ※ 消滅（列{shoumetsu_col}）は手動入力、残高（列{zandaka_col}）は数式で自動計算")
-
-        # セルを更新（発生と消費税のみ）
-        sheet.update_cell(company_row, hassei_col, new_hassei)
-        sheet.update_cell(company_row, tax_col, new_tax)
+        sheet.update_cell(company_row, hassei_col, subtotal)
+        sheet.update_cell(company_row, tax_col, tax)
 
     def get_billing_amounts(self, year: int) -> list[dict]:
         """指定年のシートから全会社・全月の「発生」「消費税」を一括読み取り
@@ -864,16 +772,20 @@ class GoogleSheetsClient:
         self,
         supplier_name: str,
         target_year_month: str,
-        purchase_invoice,  # PurchaseInvoice（循環importを避けるため型ヒントなし）
+        subtotal: int,
+        tax: int,
+        is_taxable: bool = True,
     ):
-        """仕入れスプレッドシートにデータを書き込み（セクション構造対応）
+        """仕入シートの (仕入先, 年月) セルに発生・消費税・残高の絶対値を書き込む
+
+        Phase 2 (DB-as-truth): 加算ではなく上書き。caller は DB 集計値を渡す。
+        残高 = subtotal + tax（旧加算式と同じセマンティクス。入金は別途 消滅列で管理）
 
         セクション構造に基づいて書き込み先を判定:
         - 2行セクション（課税仕入れ / 課税事業者）:
-          - is_taxable=False → 上の行（会社名行）に加算、消費税=0
-          - is_taxable=True  → 下の行（会社名行+1）に加算、消費税=subtotal×10%
-        - 1行セクション（非課税仕入 / 非課税検品）:
-          - 常に1行に加算、消費税=0
+          - is_taxable=False → 上の行（会社名行）
+          - is_taxable=True  → 下の行（会社名行+1）
+        - 1行セクション（非課税仕入 / 非課税検品）: 常に会社名行
         """
         if not PURCHASE_SPREADSHEET_ID:
             raise ValueError("PURCHASE_SPREADSHEET_ID が設定されていません")
@@ -911,57 +823,19 @@ class GoogleSheetsClient:
         tax_col = month_col + 1     # 消費税
         zandaka_col = month_col + 3 # 残高
 
-        is_taxable = getattr(purchase_invoice, 'is_taxable', True)
-
-        from gspread.utils import ValueRenderOption, rowcol_to_a1
-
         if section_type == "2row":
-            if is_taxable:
-                # 課税 → 下の行（会社名行+1）
-                target_row = company_row + 1
-                print(f"    課税仕入れ → 下の行（行{target_row}）に加算")
-            else:
-                # 非課税 → 上の行（会社名行）
-                target_row = company_row
-                print(f"    非課税仕入れ → 上の行（行{target_row}）に加算")
+            target_row = company_row + 1 if is_taxable else company_row
+            print(f"    {'課税' if is_taxable else '非課税'}仕入れ → 行{target_row}")
         else:
-            # 1行セクション → そのまま
             target_row = company_row
-            print(f"    1行セクション → 行{target_row}に加算")
+            print(f"    1行セクション → 行{target_row}")
 
-        # 5. 現在値を読み取り加算
-        hassei_raw = sheet.get(
-            rowcol_to_a1(target_row, hassei_col),
-            value_render_option=ValueRenderOption.unformatted,
-        )
-        tax_raw = sheet.get(
-            rowcol_to_a1(target_row, tax_col),
-            value_render_option=ValueRenderOption.unformatted,
-        )
-        zandaka_raw = sheet.get(
-            rowcol_to_a1(target_row, zandaka_col),
-            value_render_option=ValueRenderOption.unformatted,
-        )
-        current_hassei = parse_amount(
-            hassei_raw[0][0] if hassei_raw and hassei_raw[0] else 0
-        )
-        current_tax = parse_amount(
-            tax_raw[0][0] if tax_raw and tax_raw[0] else 0
-        )
-        current_zandaka = parse_amount(
-            zandaka_raw[0][0] if zandaka_raw and zandaka_raw[0] else 0
-        )
+        # 5. 絶対値を書き込み（残高 = 当月発生 + 消費税）
+        new_zandaka = subtotal + tax
+        print(f"    [SHEET_WRITE] 上書き: 発生={subtotal:,}, 消費税={tax:,}, 残高={new_zandaka:,}")
 
-        new_hassei = current_hassei + purchase_invoice.subtotal
-        new_tax = current_tax + purchase_invoice.tax
-        new_zandaka = current_zandaka + purchase_invoice.subtotal + purchase_invoice.tax
-
-        print(f"    既存: 発生 ¥{current_hassei:,}, 消費税 ¥{current_tax:,}, 残高 ¥{current_zandaka:,}")
-        print(f"    追加: 発生 ¥{purchase_invoice.subtotal:,}, 消費税 ¥{purchase_invoice.tax:,}")
-        print(f"    合計: 発生 ¥{new_hassei:,}, 消費税 ¥{new_tax:,}, 残高 ¥{new_zandaka:,}")
-
-        sheet.update_cell(target_row, hassei_col, new_hassei)
-        sheet.update_cell(target_row, tax_col, new_tax)
+        sheet.update_cell(target_row, hassei_col, subtotal)
+        sheet.update_cell(target_row, tax_col, tax)
         sheet.update_cell(target_row, zandaka_col, new_zandaka)
 
     def update_purchase_payment(

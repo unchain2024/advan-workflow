@@ -185,18 +185,19 @@ async def save_billing(request: SaveBillingRequest):
         )
 
         # Layer 2: シート書込（DB成功後にbest-effort、失敗しても DB は保持）
-        sheet_errors = []
-        for delivery_note in delivery_notes:
-            try:
-                sheets_client.save_billing_record(
-                    company_name=company_name,
-                    previous_billing=previous_billing,
-                    delivery_note=delivery_note,
-                    target_year_month=year_month_str,
-                )
-            except Exception as sheet_err:
-                sheet_errors.append(f"{delivery_note.slip_number}: {sheet_err}")
-                print(f"    シート書込エラー（続行）: {sheet_err}")
+        # Phase 2: per-note 加算ではなく、DB集計値で「上書き」する（再保存で 2倍/3倍にならない）
+        sheet_errors: list[str] = []
+        try:
+            agg = db.get_monthly_amounts(company_name, year_month_str)
+            sheets_client.save_billing_record(
+                company_name=company_name,
+                target_year_month=year_month_str,
+                subtotal=agg["subtotal"],
+                tax=agg["tax"],
+            )
+        except Exception as sheet_err:
+            sheet_errors.append(str(sheet_err))
+            print(f"    [SHEET_WRITE] 売上シート上書きエラー（DB保持）: {sheet_err}")
 
         # 成功メッセージ: DB 保存ベース。シート障害があれば付記する（DB-as-truth）
         if sheet_errors:
@@ -226,59 +227,66 @@ async def save_billing(request: SaveBillingRequest):
 
 @router.post("/update-payment", response_model=UpdatePaymentResponse)
 async def update_payment(request: UpdatePaymentRequest):
-    """入金額（消滅）を更新"""
+    """入金額（消滅）を更新（Phase 2: DB-first + sheet best-effort）
+
+    DEPRECATED: この経路は POST /payments と機能重複。Phase 2 で DB-first 化したが、
+    将来は POST /payments に統一予定。新規実装は /payments を使用してください。
+    """
+    print(f"    [DEPRECATED] POST /update-payment は POST /payments と統合予定")
 
     try:
-        sheets_client = GoogleSheetsClient()
-        year = _extract_year_from_year_month(request.year_month)
-        sheet = sheets_client._get_billing_sheet_by_year(year)
+        db = MonthlyItemsDB()
 
-        # 年月の列を検索
-        row1_values = sheet.row_values(1)
-        month_col_index = None
-        for i, cell_value in enumerate(row1_values):
-            if request.year_month in str(cell_value):
-                month_col_index = i + 1
-                break
+        # 1. DB 上の現在値を取得（previous_value 用）
+        prev_entry = db.get_payment(request.company_name, request.year_month)
+        previous_value = (prev_entry or {}).get("payment_amount", 0)
 
-        if month_col_index is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"年月 '{request.year_month}' が見つかりません",
-            )
-
-        # 会社の行を検索（完全一致優先マッチング）
-        col_a_values = sheet.col_values(1)
-        company_row = _find_company_row(request.company_name, col_a_values, start_row=3)
-
-        if company_row is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"会社 '{request.company_name}' が見つかりません",
-            )
-
-        # 消滅列（年月列 + 2）
-        shoumetsu_col = month_col_index + 2
-
-        # 現在の値を取得（モジュールレベルの parse_amount を使用）
-        current_value_str = sheet.cell(company_row, shoumetsu_col).value or ""
-        current_value = parse_amount(current_value_str)
-
-        # 新しい値を計算
+        # 2. 新値を確定（add_mode で加算 or 上書き）
         if request.add_mode:
-            new_value = current_value + request.payment_amount
-            action = "加算"
+            new_value = previous_value + request.payment_amount
         else:
             new_value = request.payment_amount
-            action = "更新"
 
-        # 更新
-        sheet.update_cell(company_row, shoumetsu_col, new_value)
+        # 3. DB upsert（new_value を絶対値として書込）
+        db.upsert_payment(
+            company_name=request.company_name,
+            year_month=request.year_month,
+            payment_amount=new_value,
+        )
+
+        # 4. シート同期（best-effort）
+        sheet_warning = ""
+        try:
+            sheets_client = GoogleSheetsClient()
+            year = _extract_year_from_year_month(request.year_month)
+            sheet = sheets_client._get_billing_sheet_by_year(year)
+            row1_values = sheet.row_values(1)
+            month_col_index = None
+            for i, cell_value in enumerate(row1_values):
+                if request.year_month in str(cell_value):
+                    month_col_index = i + 1
+                    break
+            if month_col_index is None:
+                raise ValueError(f"年月 '{request.year_month}' がシートにありません")
+            col_a_values = sheet.col_values(1)
+            company_row = _find_company_row(request.company_name, col_a_values, start_row=3)
+            if company_row is None:
+                raise ValueError(f"会社 '{request.company_name}' がシートにありません")
+            shoumetsu_col = month_col_index + 2
+            sheet.update_cell(company_row, shoumetsu_col, new_value)
+        except Exception as se:
+            sheet_warning = f"シート書込エラー（DB は正常）: {se}"
+            print(f"    [SHEET_WRITE] 売上消滅シート更新エラー: {se}")
+
+        action = "加算" if request.add_mode else "更新"
+        message = f"{action}完了: {request.company_name} の {request.year_month} 消滅"
+        if sheet_warning:
+            message += f"\n⚠️ {sheet_warning}"
 
         return UpdatePaymentResponse(
             success=True,
-            message=f"{action}完了: {request.company_name} の {request.year_month} 消滅",
-            previous_value=current_value,
+            message=message,
+            previous_value=previous_value,
             new_value=new_value,
         )
 
@@ -391,6 +399,48 @@ class UpdateDeliveryNoteRequest(BaseModel):
     subtotal: int
     tax: int
     total: int
+
+
+class SyncSheetsResponse(BaseModel):
+    synced_count: int
+    failed: list[str]
+    message: str
+
+
+@router.post("/sync-sheets-from-db", response_model=SyncSheetsResponse)
+async def sync_sheets_from_db():
+    """DB の集計値で売上シートを上書き同期（Phase 2: DB-as-truth 強制再同期）
+
+    monthly_invoices に存在する全 (会社, 年月) について、DB の発生・消費税合計を
+    シートの該当セルに上書きする。シート側に手で残された誤値や、加算バグで膨らんだ値を
+    DB の真値に揃える。
+    """
+    try:
+        db = MonthlyItemsDB()
+        sheets_client = GoogleSheetsClient()
+        totals = db.get_all_monthly_totals()
+        synced = 0
+        failed: list[str] = []
+        for item in totals:
+            try:
+                sheets_client.save_billing_record(
+                    company_name=item["company_name"],
+                    target_year_month=item["year_month"],
+                    subtotal=item["subtotal"],
+                    tax=item["tax"],
+                )
+                synced += 1
+            except Exception as e:
+                failed.append(f"{item['company_name']} {item['year_month']}: {e}")
+                print(f"    [SHEET_WRITE] 同期エラー: {e}")
+        message = (
+            f"DB → シート同期完了: 成功 {synced} 件" +
+            (f"、失敗 {len(failed)} 件" if failed else "")
+        )
+        return SyncSheetsResponse(synced_count=synced, failed=failed, message=message)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/check-discrepancy", response_model=CheckDiscrepancyResponse)

@@ -877,6 +877,38 @@ class MonthlyItemsDB:
 
             print(f"    月次明細DB更新完了: {company_name} ({year_month})")
 
+    def get_all_purchase_monthly_totals(self) -> list[dict]:
+        """DB内の全 purchase_invoices の各仕入先・月の合計を課税/非課税別に返す
+
+        Returns:
+            list[dict]: [{company_name, year_month, taxable_subtotal, taxable_tax,
+                          nontaxable_subtotal, nontaxable_tax}, ...]
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT pi.company_name, pi.year_month,
+                       COALESCE(SUM(CASE WHEN pn.is_taxable = 1 THEN pn.subtotal ELSE 0 END), 0) AS taxable_subtotal,
+                       COALESCE(SUM(CASE WHEN pn.is_taxable = 1 THEN pn.tax ELSE 0 END), 0) AS taxable_tax,
+                       COALESCE(SUM(CASE WHEN pn.is_taxable = 0 THEN pn.subtotal ELSE 0 END), 0) AS nontaxable_subtotal,
+                       COALESCE(SUM(CASE WHEN pn.is_taxable = 0 THEN pn.tax ELSE 0 END), 0) AS nontaxable_tax
+                FROM purchase_invoices pi
+                JOIN purchase_notes pn ON pn.purchase_invoice_id = pi.id
+                GROUP BY pi.id
+                ORDER BY pi.year_month, pi.company_name
+            """)
+            return [
+                {
+                    "company_name": row["company_name"],
+                    "year_month": row["year_month"],
+                    "taxable_subtotal": row["taxable_subtotal"] or 0,
+                    "taxable_tax": row["taxable_tax"] or 0,
+                    "nontaxable_subtotal": row["nontaxable_subtotal"] or 0,
+                    "nontaxable_tax": row["nontaxable_tax"] or 0,
+                }
+                for row in cursor.fetchall()
+            ]
+
     def get_all_monthly_totals(self) -> list[dict]:
         """DB内の全 monthly_invoices の各会社・月の合計 subtotal/tax を返す
 
@@ -1439,6 +1471,34 @@ class MonthlyItemsDB:
             return {
                 "subtotal": row["subtotal"] or 0,
                 "tax": row["tax"] or 0,
+                "notes_count": row["notes_count"] or 0,
+            }
+
+    def get_purchase_amounts(self, company_name: str, year_month: str) -> dict:
+        """指定仕入先・年月の発生(subtotal)・消費税合計を purchase_notes から集計
+
+        is_taxable=True/False ごとに分けて集計する（仕入シートの 2-row セクション対応）。
+        sync_purchase_sheet で課税/非課税別の sheet 行に書き分けるために使用。
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN pn.is_taxable = 1 THEN pn.subtotal ELSE 0 END), 0) AS taxable_subtotal,
+                    COALESCE(SUM(CASE WHEN pn.is_taxable = 1 THEN pn.tax ELSE 0 END), 0) AS taxable_tax,
+                    COALESCE(SUM(CASE WHEN pn.is_taxable = 0 THEN pn.subtotal ELSE 0 END), 0) AS nontaxable_subtotal,
+                    COALESCE(SUM(CASE WHEN pn.is_taxable = 0 THEN pn.tax ELSE 0 END), 0) AS nontaxable_tax,
+                    COUNT(pn.id) AS notes_count
+                FROM purchase_notes pn
+                JOIN purchase_invoices pi ON pn.purchase_invoice_id = pi.id
+                WHERE pi.company_name = ? AND pi.year_month = ?
+            """, (company_name, year_month))
+            row = cursor.fetchone()
+            return {
+                "taxable_subtotal": row["taxable_subtotal"] or 0,
+                "taxable_tax": row["taxable_tax"] or 0,
+                "nontaxable_subtotal": row["nontaxable_subtotal"] or 0,
+                "nontaxable_tax": row["nontaxable_tax"] or 0,
                 "notes_count": row["notes_count"] or 0,
             }
 
