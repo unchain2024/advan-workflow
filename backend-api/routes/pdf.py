@@ -198,8 +198,12 @@ async def process_pdf(
                 target_year = int(delivery_note.date.split('/')[0])
             except (ValueError, IndexError):
                 pass
+        # Phase 4: filename ヒントを渡して親/子 disambiguation を有効化
+        # （例: 'アダストリア' + 'アダストリアHARE_岡部.pdf' → HARE事業部）
         canonical_name = sheets_client.get_canonical_company_name(
-            effective_company_name, year=target_year
+            effective_company_name,
+            year=target_year,
+            filename=file.filename,
         )
         company_matched = True
         sheet_company_candidates = []

@@ -63,6 +63,117 @@ def normalize_company_name(name: str) -> str:
     return name.strip()
 
 
+def _extra_signatures(extra: str) -> list[str]:
+    """canonical 名の "親に対する追加部分" から、ファイル名で検索可能なトークンを抽出
+
+    例:
+    - 'HARE事業部' → ['HARE', '事業部']
+    - 'ショッパー' → ['ショッパー']
+    - '/サンプル' → ['サンプル']
+    - 'YS/サンプル' → ['YS', 'サンプル']
+    - '/非課税' → ['非課税']
+    """
+    import re
+    if not extra:
+        return []
+    # 英数字 / カタカナ / 漢字 / ひらがな の連続をトークンとして抽出
+    tokens = re.findall(
+        r'[A-Za-z0-9]+|[゠-ヿー]+|[一-鿿]+|[぀-ゟ]+',
+        extra,
+    )
+    # 1文字以上のトークンのみ（区切り記号は除外）
+    return [t for t in tokens if len(t) >= 1]
+
+
+def match_company_name_with_filename(
+    search_name: str,
+    candidates: list[str],
+    filename: Optional[str] = None,
+) -> Optional[str]:
+    """ファイル名ヒントを使った canonical 解決
+
+    動作:
+    - 親 (exact match) と 子 (接頭辞共有 = sibling) が共存する場合:
+      - ファイル名のトークン (例: 'HARE', 'ショッパー') で disambiguate
+      - ヒットすれば該当する子を返す
+      - ヒットしなければ親を返す（既存挙動と同じ）
+      - ヒント無しで子しか存在しないなら None を返してピッカー強制
+
+    例:
+    - search='アダストリア', filename='0227アダストリアHARE_岡部.pdf'
+      candidates に [親, HARE事業部, ショッパー] がある場合
+      → 'HARE' トークンが filename にヒット → '（株）アダストリア　HARE事業部'
+    - search='アダストリア', filename='0218アダストリア岡部.pdf'
+      → 'HARE' / 'ショッパー' どちらも filename に無い → 親 '（株）アダストリア'
+    - search='インス', filename='0201インス・佐藤.pdf'
+      → 子 '/非課税' のトークン '非課税' が filename に無い → 親 '（株）インス'
+    """
+    normalized_search = normalize_company_name(search_name)
+    if not normalized_search:
+        return None
+
+    # canonical を normalized 形でインデックス化
+    canon_by_norm: dict[str, list[str]] = {}
+    for c in candidates:
+        if not c:
+            continue
+        n = normalize_company_name(str(c))
+        if n:
+            canon_by_norm.setdefault(n, []).append(str(c).strip())
+
+    # 親 (exact) 候補
+    exact = list(dict.fromkeys(canon_by_norm.get(normalized_search, [])))
+    if len(exact) >= 2:
+        return None  # 正規化後に同名の異なる会社 → 曖昧
+
+    # 子 (sibling) 候補: normalized_search の prefix で始まる、より長い canonical
+    siblings: list[str] = []
+    for n, cs in canon_by_norm.items():
+        if n != normalized_search and n.startswith(normalized_search):
+            for c in cs:
+                if c not in siblings:
+                    siblings.append(c)
+
+    # 親なし・子なし → 既存の partial-match ロジックにフォールバック
+    if not exact and not siblings:
+        return match_company_name(search_name, candidates)
+
+    # 親のみ → そのまま返す（既存挙動）
+    if exact and not siblings:
+        return exact[0]
+
+    # 子のみ単一 → そのまま返す（既存挙動）
+    if not exact and len(siblings) == 1:
+        return siblings[0]
+
+    # ここから siblings あり: ファイル名で disambiguate を試みる
+    normalized_filename = normalize_company_name(filename or "")
+
+    if siblings and normalized_filename:
+        scored: list[tuple[str, int]] = []
+        for c in siblings:
+            n = normalize_company_name(c)
+            extra = n[len(normalized_search):]
+            sigs = _extra_signatures(extra)
+            score = sum(len(sig) for sig in sigs if sig and sig in normalized_filename)
+            if score > 0:
+                scored.append((c, score))
+        if scored:
+            scored.sort(key=lambda x: -x[1])
+            top_score = scored[0][1]
+            top = [c for c, s in scored if s == top_score]
+            if len(top) == 1:
+                return top[0]
+            # 同点 → 曖昧 → ピッカー
+            return None
+
+    # ファイル名にヒント無し
+    if exact:
+        return exact[0]  # 親で確定（既存挙動・後方互換）
+    # 子複数あって disambiguate できず → ピッカー
+    return None
+
+
 def match_company_name(search_name: str, candidates: list[str]) -> Optional[str]:
     """正規化した会社名で最適な候補を選択
 
@@ -388,22 +499,31 @@ class GoogleSheetsClient:
 
         return credentials
 
-    def get_canonical_company_name(self, company_name: str, year: Optional[int] = None) -> Optional[str]:
+    def get_canonical_company_name(
+        self,
+        company_name: str,
+        year: Optional[int] = None,
+        filename: Optional[str] = None,
+    ) -> Optional[str]:
         """売上 canonical 会社名を取得（ハードコードリスト経由）
 
-        Phase 1 で sheet 依存を撤廃。SALES_CANONICALS（src/canonical_companies.py）
-        を唯一の真値として使用する。`year` パラメータは API 互換のため残置（無視）。
+        Phase 1 で sheet 依存を撤廃。SALES_CANONICALS を唯一の真値として使用する。
+        Phase 3 で filename ヒントを追加: 親と子（HARE 事業部 等）が canonical に
+        共存する場合、ファイル名のトークンで子を判別する。
 
         Args:
             company_name: LLMが抽出した会社名
             year: （未使用・後方互換）
+            filename: PDFファイル名（親/子の disambiguation に使用、任意）
 
         Returns:
-            マッチした canonical 会社名、見つからない場合は None
+            マッチした canonical 会社名、見つからない/曖昧な場合は None（ピッカー強制）
         """
-        canonical = match_company_name(company_name, list(SALES_CANONICALS))
+        canonical = match_company_name_with_filename(
+            company_name, list(SALES_CANONICALS), filename=filename
+        )
         if canonical:
-            print(f"    正規会社名取得: '{company_name}' → '{canonical}'")
+            print(f"    正規会社名取得: '{company_name}' → '{canonical}' (filename={filename!r})")
         return canonical
 
     def get_company_info(self, company_name: str) -> Optional[CompanyInfo]:
@@ -928,16 +1048,21 @@ class GoogleSheetsClient:
         return {"headers": headers, "data": rows}
 
     def get_canonical_purchase_company_name(
-        self, company_name: str, year: Optional[int] = None
+        self,
+        company_name: str,
+        year: Optional[int] = None,
+        filename: Optional[str] = None,
     ) -> Optional[str]:
         """仕入 canonical 会社名を取得（ハードコードリスト経由）
 
         Phase 1 で sheet 依存を撤廃。PURCHASE_CANONICALS を唯一の真値として使用する。
-        `year` パラメータは API 互換のため残置（無視）。
+        Phase 3 で filename ヒント引数を追加（親/子 disambiguation 用）。
         """
-        canonical = match_company_name(company_name, list(PURCHASE_CANONICALS))
+        canonical = match_company_name_with_filename(
+            company_name, list(PURCHASE_CANONICALS), filename=filename
+        )
         if canonical:
-            print(f"    仕入れ正規会社名取得: '{company_name}' → '{canonical}'")
+            print(f"    仕入れ正規会社名取得: '{company_name}' → '{canonical}' (filename={filename!r})")
         return canonical
 
     def _find_month_column_in_row(self, row_values: list, target_year_month: str) -> Optional[int]:
