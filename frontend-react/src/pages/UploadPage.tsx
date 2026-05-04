@@ -163,6 +163,26 @@ export const UploadPage: React.FC = () => {
     }
   };
 
+  // 保存時に backend が canonical 不一致 (HTTP 400) を返した場合、ピッカーへ戻す
+  const handleSaveCompanyMismatch = (info: {
+    extracted_name: string;
+    candidates: string[];
+  }) => {
+    setSpreadsheetSaved(false);
+    setCompanyMismatch(true);
+    setExtractedCompanyName(info.extracted_name);
+    setCompanyCandidates(info.candidates);
+    setSuggestedCandidates([]);
+    setShowAllCandidates(true);
+    setError(
+      `会社名 '${info.extracted_name}' が canonical マスターと一致しませんでした。下のリストから正しい会社名を選択してください。`
+    );
+    // ピッカー位置までスクロール
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   const handleSelectCompany = async (selectedName: string) => {
     // allDeliveryNotes と currentDeliveryNote の会社名を一括更新
     useAppStore.setState((state) => ({
@@ -573,6 +593,7 @@ export const UploadPage: React.FC = () => {
               cumulativeSubtotal={cumulativeSubtotal}
               cumulativeTax={cumulativeTax}
               salesPerson={salesPerson}
+              onCompanyMismatch={handleSaveCompanyMismatch}
             />
           )}
         </div>

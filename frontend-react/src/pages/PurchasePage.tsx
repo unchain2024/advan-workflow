@@ -147,8 +147,22 @@ export const PurchasePage: React.FC = () => {
       alert(message);
       setIsSaved(true);
     } catch (err: any) {
-      const errorMessage = err?.response?.data?.detail || err.message || '保存中にエラーが発生しました';
-      setError(errorMessage);
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail;
+      // 400 + canonical 不一致は専用文言（PurchasePage は inline 編集で対応）
+      if (status === 400 && detail?.error === 'company_not_matched') {
+        // 同じ requestId で再送されないよう振り直す
+        requestIdRef.current = crypto.randomUUID();
+        setError(
+          `仕入先 '${detail.extracted_name}' がマスターに未登録です。仕入先名（鉛筆アイコン）を編集して、canonical な名称に修正のうえ再試行してください。`
+        );
+      } else {
+        const errorMessage =
+          (typeof detail === 'string' ? detail : detail?.message) ||
+          err?.message ||
+          '保存中にエラーが発生しました';
+        setError(errorMessage);
+      }
     } finally {
       setIsSaving(false);
     }

@@ -1,10 +1,16 @@
 import React, { useState, useRef } from 'react';
+import axios from 'axios';
 import { Button } from '../Common/Button';
 import { Message } from '../Common/Message';
 import { MetricCard } from '../Common/MetricCard';
 import { saveBilling, checkDiscrepancy } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
-import type { DeliveryNote, PreviousBilling, ExistingNoteInfo } from '../../types';
+import type {
+  DeliveryNote,
+  PreviousBilling,
+  ExistingNoteInfo,
+  CompanyNotMatchedError,
+} from '../../types';
 
 interface SpreadsheetSaveProps {
   allDeliveryNotes: DeliveryNote[];
@@ -17,6 +23,7 @@ interface SpreadsheetSaveProps {
   cumulativeSubtotal?: number;
   cumulativeTax?: number;
   salesPerson: string;
+  onCompanyMismatch?: (info: CompanyNotMatchedError) => void;
 }
 
 export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
@@ -30,6 +37,7 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
   cumulativeSubtotal,
   cumulativeTax,
   salesPerson,
+  onCompanyMismatch,
 }) => {
   const setDiscrepancies = useAppStore((s) => s.setDiscrepancies);
   const [isLoading, setIsLoading] = useState(false);
@@ -87,6 +95,16 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
         console.error('乖離チェックエラー:', discErr);
       }
     } catch (err) {
+      // 400 + company_not_matched は会社ピッカーへ戻す（DB-as-truth Phase 1）
+      if (axios.isAxiosError(err) && err.response?.status === 400) {
+        const detail = err.response.data?.detail as CompanyNotMatchedError | undefined;
+        if (detail?.error === 'company_not_matched' && onCompanyMismatch) {
+          // 同じ requestId で再保存されないよう振り直す
+          requestIdRef.current = crypto.randomUUID();
+          onCompanyMismatch(detail);
+          return;
+        }
+      }
       setError(err instanceof Error ? err.message : '書き込みエラーが発生しました');
     } finally {
       setIsLoading(false);

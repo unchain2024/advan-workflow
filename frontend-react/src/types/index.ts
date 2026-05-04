@@ -110,6 +110,15 @@ export interface SaveBillingResponse {
   saved_count?: number;
   duplicate_conflict?: boolean;
   existing_notes?: ExistingNoteInfo[];
+  sheet_errors?: string[];
+}
+
+// HTTP 400: canonical 不一致時に返却される構造化エラー（売上・仕入共通）
+export interface CompanyNotMatchedError {
+  error: 'company_not_matched';
+  extracted_name: string;
+  candidates: string[];
+  message: string;
 }
 
 export interface RegenerateInvoiceRequest {
