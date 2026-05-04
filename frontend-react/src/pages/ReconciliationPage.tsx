@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { getDeliveryNotes, updateDeliveryNote, checkDiscrepancy } from '../api/client';
+import {
+  getDeliveryNotes,
+  updateDeliveryNote,
+  checkDiscrepancy,
+  syncSheetsFromDB,
+  syncPurchaseSheetsFromDB,
+} from '../api/client';
 import type { Discrepancy, DBDeliveryNote } from '../types';
 
 interface EditingNote extends DBDeliveryNote {
@@ -212,6 +218,7 @@ export const ReconciliationPage: React.FC = () => {
   const setDiscrepancies = useAppStore((s) => s.setDiscrepancies);
   const setDiscrepancyLoading = useAppStore((s) => s.setDiscrepancyLoading);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -232,17 +239,65 @@ export const ReconciliationPage: React.FC = () => {
     await handleRefresh();
   };
 
+  const handleSyncSheetsFromDB = async () => {
+    if (
+      !window.confirm(
+        'DB の集計値で売上シート＋仕入シートを上書きします。シート上の手入力値はDB値で置き換わります。続行しますか？'
+      )
+    ) {
+      return;
+    }
+    setSyncing(true);
+    try {
+      const sales = await syncSheetsFromDB();
+      const purchase = await syncPurchaseSheetsFromDB();
+      const failed = [...sales.failed, ...purchase.failed];
+      const totalSynced = sales.synced_count + purchase.synced_count;
+      alert(
+        `DB → シート同期完了\n` +
+        `  売上: ${sales.synced_count} 件\n` +
+        `  仕入: ${purchase.synced_count} 件\n` +
+        `  合計成功: ${totalSynced} 件` +
+        (failed.length > 0 ? `\n\n⚠️ 失敗 ${failed.length} 件:\n${failed.slice(0, 10).join('\n')}` : '')
+      );
+      await handleRefresh();
+    } catch (e: any) {
+      alert(`同期エラー: ${e?.response?.data?.detail || e?.message || e}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold text-gray-800">乖離確認</h1>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium disabled:opacity-50"
-        >
-          {refreshing ? '確認中...' : '再チェック'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleSyncSheetsFromDB}
+            disabled={syncing || refreshing}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
+            title="DBの集計値でシートを上書き同期します"
+          >
+            {syncing ? '同期中...' : 'シートをDBから再同期'}
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium disabled:opacity-50"
+          >
+            {refreshing ? '確認中...' : '再チェック'}
+          </button>
+        </div>
+      </div>
+
+      {/* Phase 2 DB-as-truth バナー */}
+      <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
+        <p className="font-semibold mb-1">📌 DB が source of truth です</p>
+        <p>
+          シート側の値が DB と異なる場合、DB の値が正しい前提です。
+          シートが古い・壊れている場合は「シートをDBから再同期」で上書きできます。
+        </p>
       </div>
 
       <p className="text-gray-600 mb-6">

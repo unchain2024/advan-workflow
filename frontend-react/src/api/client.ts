@@ -264,6 +264,23 @@ export const checkDiscrepancy = async (): Promise<CheckDiscrepancyResponse> => {
   return response.data;
 };
 
+// Phase 2d: DB 集計値で売上シートを強制再同期
+export interface SyncSheetsResponse {
+  synced_count: number;
+  failed: string[];
+  message: string;
+}
+
+export const syncSheetsFromDB = async (): Promise<SyncSheetsResponse> => {
+  const response = await apiClient.post<SyncSheetsResponse>('/sync-sheets-from-db');
+  return response.data;
+};
+
+export const syncPurchaseSheetsFromDB = async (): Promise<SyncSheetsResponse> => {
+  const response = await apiClient.post<SyncSheetsResponse>('/sync-purchase-sheets-from-db');
+  return response.data;
+};
+
 export const getDeliveryNotes = async (
   companyName: string,
   yearMonth: string

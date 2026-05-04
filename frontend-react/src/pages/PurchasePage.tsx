@@ -34,6 +34,13 @@ export const PurchasePage: React.FC = () => {
   // 仕入先名の編集状態
   const [editingSupplierIndex, setEditingSupplierIndex] = useState<number | null>(null);
 
+  // 仕入先 canonical 不一致時のピッカー状態（Phase 2c）
+  const [supplierMismatch, setSupplierMismatch] = useState(false);
+  const [supplierCandidates, setSupplierCandidates] = useState<string[]>([]);
+  const [extractedSupplierName, setExtractedSupplierName] = useState('');
+  const [showAllSupplierCandidates, setShowAllSupplierCandidates] = useState(false);
+  const [supplierFilter, setSupplierFilter] = useState('');
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { 'application/pdf': ['.pdf'] },
     multiple: true,
@@ -149,13 +156,19 @@ export const PurchasePage: React.FC = () => {
     } catch (err: any) {
       const status = err?.response?.status;
       const detail = err?.response?.data?.detail;
-      // 400 + canonical 不一致は専用文言（PurchasePage は inline 編集で対応）
+      // Phase 2c: 400 + canonical 不一致は picker UI を表示
       if (status === 400 && detail?.error === 'company_not_matched') {
         // 同じ requestId で再送されないよう振り直す
         requestIdRef.current = crypto.randomUUID();
-        setError(
-          `仕入先 '${detail.extracted_name}' がマスターに未登録です。仕入先名（鉛筆アイコン）を編集して、canonical な名称に修正のうえ再試行してください。`
-        );
+        setExtractedSupplierName(detail.extracted_name);
+        setSupplierCandidates(detail.candidates || []);
+        setSupplierMismatch(true);
+        setShowAllSupplierCandidates(false);
+        setSupplierFilter('');
+        setError(null);
+        if (typeof window !== 'undefined') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       } else {
         const errorMessage =
           (typeof detail === 'string' ? detail : detail?.message) ||
@@ -184,6 +197,17 @@ export const PurchasePage: React.FC = () => {
     setAllInvoices((prev) =>
       prev.map((inv, i) => (i === index ? { ...inv, supplier_name: newName } : inv))
     );
+  };
+
+  // 仕入先ピッカーで canonical 名を選択 → 全 invoice の supplier_name を更新
+  const handleSelectSupplier = (selectedName: string) => {
+    setAllInvoices((prev) =>
+      prev.map((inv) => ({ ...inv, supplier_name: selectedName }))
+    );
+    setSupplierMismatch(false);
+    setSupplierCandidates([]);
+    setExtractedSupplierName('');
+    setError(null);
   };
 
   // 累積合計
@@ -352,6 +376,59 @@ export const PurchasePage: React.FC = () => {
       {error && (
         <div className="mt-6">
           <Message type="error">{error}</Message>
+        </div>
+      )}
+
+      {/* 仕入先ピッカー (Phase 2c: canonical 不一致時) */}
+      {supplierMismatch && supplierCandidates.length > 0 && (
+        <div className="mt-6">
+          <Message type="error">
+            <p className="font-semibold mb-2">
+              仕入先「{extractedSupplierName}」がマスターに登録されていません。正しい仕入先を選択してください：
+            </p>
+
+            <div className="mt-3">
+              <input
+                type="text"
+                value={supplierFilter}
+                onChange={(e) => setSupplierFilter(e.target.value)}
+                placeholder="仕入先名で絞り込み..."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setShowAllSupplierCandidates((v) => !v)}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+              >
+                {showAllSupplierCandidates
+                  ? '▲ 折りたたむ'
+                  : `▼ 候補を表示（${supplierCandidates.length}件）`}
+              </button>
+              {showAllSupplierCandidates && (
+                <div className="space-y-2 mt-2 max-h-96 overflow-y-auto border border-gray-200 rounded-lg p-2 bg-white">
+                  {supplierCandidates
+                    .filter((name) =>
+                      supplierFilter
+                        ? name.toLowerCase().includes(supplierFilter.toLowerCase())
+                        : true
+                    )
+                    .map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => handleSelectSupplier(name)}
+                        className="block w-full text-left px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-gray-800"
+                      >
+                        {name}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+          </Message>
         </div>
       )}
 
