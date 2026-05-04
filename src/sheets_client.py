@@ -21,6 +21,7 @@ try:
 except ImportError:
     HAS_STREAMLIT = False
 
+from .canonical_companies import PURCHASE_CANONICALS, SALES_CANONICALS
 from .config import (
     BILLING_SHEET_NAME,
     BILLING_SPREADSHEET_ID,
@@ -388,33 +389,22 @@ class GoogleSheetsClient:
         return credentials
 
     def get_canonical_company_name(self, company_name: str, year: Optional[int] = None) -> Optional[str]:
-        """売上集計表から正規の会社名を取得
+        """売上 canonical 会社名を取得（ハードコードリスト経由）
 
-        LLMが抽出した会社名を、スプレッドシートのColumn Aに記載されている
-        正確な会社名に変換する。
+        Phase 1 で sheet 依存を撤廃。SALES_CANONICALS（src/canonical_companies.py）
+        を唯一の真値として使用する。`year` パラメータは API 互換のため残置（無視）。
 
         Args:
             company_name: LLMが抽出した会社名
-            year: 対象年（Noneの場合は今年）
+            year: （未使用・後方互換）
 
         Returns:
-            str: スプレッドシートに記載されている会社名、見つからない場合はNone
+            マッチした canonical 会社名、見つからない場合は None
         """
-        try:
-            if year is None:
-                year = datetime.now().year
-
-            sheet = self._get_billing_sheet_by_year(year)
-            col_a_values = sheet.col_values(1)
-            candidates = [v for v in col_a_values[2:] if v]  # Row 3以降
-
-            canonical = match_company_name(company_name, candidates)
-            if canonical:
-                print(f"    正規会社名取得: '{company_name}' → '{canonical}'")
-            return canonical
-        except Exception as e:
-            print(f"    正規会社名の取得エラー: {e}")
-            return None
+        canonical = match_company_name(company_name, list(SALES_CANONICALS))
+        if canonical:
+            print(f"    正規会社名取得: '{company_name}' → '{canonical}'")
+        return canonical
 
     def get_company_info(self, company_name: str) -> Optional[CompanyInfo]:
         """会社マスターから会社情報を取得
@@ -1066,22 +1056,15 @@ class GoogleSheetsClient:
     def get_canonical_purchase_company_name(
         self, company_name: str, year: Optional[int] = None
     ) -> Optional[str]:
-        """仕入れスプレッドシートから正規の会社名を取得"""
-        try:
-            if year is None:
-                year = datetime.now().year
+        """仕入 canonical 会社名を取得（ハードコードリスト経由）
 
-            sheet = self._get_purchase_sheet_by_year(year)
-            col_a_values = sheet.col_values(1)
-            candidates = [v for v in col_a_values[3:] if v]  # Row 4以降
-
-            canonical = match_company_name(company_name, candidates)
-            if canonical:
-                print(f"    仕入れ正規会社名取得: '{company_name}' → '{canonical}'")
-            return canonical
-        except Exception as e:
-            print(f"    仕入れ正規会社名の取得エラー: {e}")
-            return None
+        Phase 1 で sheet 依存を撤廃。PURCHASE_CANONICALS を唯一の真値として使用する。
+        `year` パラメータは API 互換のため残置（無視）。
+        """
+        canonical = match_company_name(company_name, list(PURCHASE_CANONICALS))
+        if canonical:
+            print(f"    仕入れ正規会社名取得: '{company_name}' → '{canonical}'")
+        return canonical
 
     def _find_month_column_in_row(self, row_values: list, target_year_month: str) -> Optional[int]:
         """行データから年月の列を検索"""

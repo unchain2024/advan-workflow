@@ -226,6 +226,27 @@ class MonthlyItemsDB:
                 ON monthly_payments(company_name, year_month)
             """)
 
+            # --- 仕入入金管理テーブル（DB-as-truth Phase 1） ---
+            # シート同期の有無に依らず DB に確定値を保持する。
+            # add_mode=False（既定）: payment_amount を「上書き」
+            # add_mode=True: payment_amount を「加算」
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS purchase_payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_name TEXT NOT NULL,
+                    year_month TEXT NOT NULL,
+                    payment_amount INTEGER NOT NULL DEFAULT 0,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(company_name, year_month)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_purchase_payments_company_ym
+                ON purchase_payments(company_name, year_month)
+            """)
+
             # 旧テーブルからマイグレーション
             cursor.execute("""
                 SELECT name FROM sqlite_master
@@ -1532,6 +1553,109 @@ class MonthlyItemsDB:
                     "year_month": row["year_month"],
                     "payment_amount": row["payment_amount"],
                     "opening_balance": row["opening_balance"],
+                    "note": row["note"],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    # --- 仕入入金管理 (Phase 1: DB-as-truth) ---
+
+    def upsert_purchase_payment(
+        self,
+        company_name: str,
+        year_month: str,
+        payment_amount: int,
+        add_mode: bool = False,
+        note: Optional[str] = None,
+    ) -> dict:
+        """仕入入金を登録または更新
+
+        Args:
+            add_mode: True の場合は既存値に加算、False の場合は上書き（既定）
+            note: None の場合は既存値を保持（新規行作成時は ""）
+        """
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, payment_amount, note FROM purchase_payments
+                WHERE company_name = ? AND year_month = ?
+            """, (company_name, year_month))
+            row = cursor.fetchone()
+            if row:
+                old_value = row["payment_amount"] or 0
+                new_value = old_value + payment_amount if add_mode else payment_amount
+                new_note = row["note"] if note is None else note
+                cursor.execute("""
+                    UPDATE purchase_payments
+                    SET payment_amount = ?, note = ?, updated_at = ?
+                    WHERE id = ?
+                """, (new_value, new_note, current_time, row["id"]))
+                pid = row["id"]
+            else:
+                new_value = payment_amount
+                cursor.execute("""
+                    INSERT INTO purchase_payments
+                    (company_name, year_month, payment_amount, note, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    company_name, year_month, new_value,
+                    note or "", current_time, current_time,
+                ))
+                pid = cursor.lastrowid
+            return {
+                "id": pid,
+                "company_name": company_name,
+                "year_month": year_month,
+                "payment_amount": new_value,
+                "new_value": new_value,
+            }
+
+    def get_purchase_payment(self, company_name: str, year_month: str) -> Optional[dict]:
+        """指定仕入先・年月の入金エントリを取得"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM purchase_payments
+                WHERE company_name = ? AND year_month = ?
+            """, (company_name, year_month))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "company_name": row["company_name"],
+                "year_month": row["year_month"],
+                "payment_amount": row["payment_amount"],
+                "note": row["note"],
+            }
+
+    def list_purchase_payments(
+        self, company_name: Optional[str] = None, year_month: Optional[str] = None
+    ) -> list[dict]:
+        """仕入入金エントリの一覧を取得"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            conditions = []
+            params: list = []
+            if company_name:
+                conditions.append("company_name = ?")
+                params.append(company_name)
+            if year_month:
+                conditions.append("year_month = ?")
+                params.append(year_month)
+            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+            cursor.execute(f"""
+                SELECT * FROM purchase_payments
+                {where}
+                ORDER BY company_name, year_month
+            """, params)
+            return [
+                {
+                    "id": row["id"],
+                    "company_name": row["company_name"],
+                    "year_month": row["year_month"],
+                    "payment_amount": row["payment_amount"],
                     "note": row["note"],
                 }
                 for row in cursor.fetchall()
