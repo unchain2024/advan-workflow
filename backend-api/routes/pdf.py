@@ -17,6 +17,7 @@ from src.extractor import UnifiedExtractor
 from src.sheets_client import GoogleSheetsClient, PreviousBilling
 from src.invoice_generator import InvoiceGenerator
 from src.pdf_extractor import DeliveryNote, DeliveryItem
+from src.canonical_companies import list_canonicals
 
 router = APIRouter()
 
@@ -208,18 +209,10 @@ async def process_pdf(
                 print(f"  会社名を正規化: '{effective_company_name}' → '{canonical_name}'")
             effective_company_name = canonical_name
         else:
-            # マッチしなかった場合、シートの会社名候補を返す
+            # マッチしなかった場合、canonical 会社名リストから候補を返す
+            # （Phase 1: シート読込みを廃止、ハードコード canonical を真値とする）
             company_matched = False
-            try:
-                sheet = sheets_client._get_billing_sheet_by_year(target_year or year)
-                col_a_values = sheet.col_values(1)
-                seen = set()
-                for v in col_a_values[2:]:
-                    if v and v not in seen:
-                        seen.add(v)
-                        sheet_company_candidates.append(v)
-            except Exception:
-                pass
+            sheet_company_candidates = list_canonicals("sales")
             # ファイル名＋抽出会社名からキーワードを抽出してスコアリング
             filename_keywords = _extract_filename_keywords(file.filename or "")
             scored = [

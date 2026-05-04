@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from src.purchase_extractor import PurchaseExtractor, PurchaseInvoice, PurchaseItem
 from src.sheets_client import GoogleSheetsClient, parse_amount, _find_company_row
 from src.database import MonthlyItemsDB
+from src.canonical_companies import list_canonicals
 
 router = APIRouter()
 
@@ -238,15 +239,24 @@ async def save_purchase(request: SavePurchaseRequest):
                 saved_count=0,
             )
 
-        # 2. 会社名正規化
+        # 2. 会社名正規化（Phase 1: canonical 不一致は 400 reject、auto-add 厳禁）
         sheets_client = GoogleSheetsClient()
         company_name = request.company_name
         target_year = _extract_year_from_year_month(request.year_month)
         canonical = sheets_client.get_canonical_purchase_company_name(
             company_name, year=target_year
         )
-        if canonical:
-            company_name = canonical
+        if not canonical:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "company_not_matched",
+                    "extracted_name": company_name,
+                    "candidates": list_canonicals("purchase"),
+                    "message": f"仕入先 '{company_name}' が canonical マスターに一致しませんでした。仕入先名を編集して再試行してください。",
+                },
+            )
+        company_name = canonical
 
         # 3. 年月フォーマット変換
         year_month_str = request.year_month
@@ -295,15 +305,7 @@ async def save_purchase(request: SavePurchaseRequest):
                     message="以下の伝票番号は既にDBに保存されています",
                 )
 
-        # 6. シート保存（先に実行 — 失敗したらDB保存しない）
-        for pi in purchase_invoices:
-            sheets_client.save_purchase_record(
-                supplier_name=company_name,
-                target_year_month=year_month_str,
-                purchase_invoice=pi,
-            )
-
-        # 7. シート保存成功後にDB保存
+        # 6. Layer 1: DB一括保存（DB-as-truth: シート障害でもDBは保持）
         saved_count = db.save_purchase_batch(
             company_name=company_name,
             year_month=year_month_str,
@@ -312,14 +314,39 @@ async def save_purchase(request: SavePurchaseRequest):
             request_id=request.request_id,
         )
 
-        message = f"仕入れデータを {company_name} ({request.year_month}) に保存しました（{saved_count}件）"
+        # 7. Layer 2: シート書込（DB成功後にbest-effort、失敗しても DB は保持）
+        sheet_errors = []
+        for pi in purchase_invoices:
+            try:
+                sheets_client.save_purchase_record(
+                    supplier_name=company_name,
+                    target_year_month=year_month_str,
+                    purchase_invoice=pi,
+                )
+            except Exception as sheet_err:
+                sheet_errors.append(f"{pi.slip_number}: {sheet_err}")
+                print(f"    [SHEET_WRITE] 仕入シート書込エラー（続行）: {sheet_err}")
+
+        if sheet_errors:
+            message = (
+                f"DB保存成功（{saved_count}件）。"
+                f"\n⚠️ 仕入シート書込で {len(sheet_errors)} 件のエラー（DB は正常）: "
+                f"{'; '.join(sheet_errors)}"
+            )
+            warning = f"仕入シート書込エラー: {'; '.join(sheet_errors)}"
+        else:
+            message = f"DB保存成功（{saved_count}件）。仕入シートも更新しました ({company_name} {request.year_month})"
+            warning = ""
 
         return SavePurchaseResponse(
             success=True,
             message=message,
             saved_count=saved_count,
+            warning=warning,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -328,27 +355,55 @@ async def save_purchase(request: SavePurchaseRequest):
 
 @router.post("/update-purchase-payment", response_model=UpdatePurchasePaymentResponse)
 async def update_purchase_payment(request: UpdatePurchasePaymentRequest):
-    """仕入れスプレッドシートの消滅列を更新"""
+    """仕入入金（消滅）を更新
+
+    Phase 1: DB を source of truth として upsert 後、シート書込みを best-effort で実行。
+    シート障害時は warning ログのみで 200 を返す（DB の確定値を維持）。
+    """
 
     try:
-        sheets_client = GoogleSheetsClient()
-        result = sheets_client.update_purchase_payment(
+        db = MonthlyItemsDB()
+
+        # Layer 1: DB upsert（previous_value は upsert 前の DB 値、new_value は upsert 後の DB 値）
+        prev = db.get_purchase_payment(request.company_name, request.year_month)
+        previous_value = (prev or {}).get("payment_amount", 0)
+
+        upserted = db.upsert_purchase_payment(
             company_name=request.company_name,
             year_month=request.year_month,
             payment_amount=request.payment_amount,
             add_mode=request.add_mode,
         )
+        new_value = upserted["new_value"]
+
+        # Layer 2: シート書込（best-effort、失敗しても DB は保持）
+        sheet_warning = ""
+        try:
+            sheets_client = GoogleSheetsClient()
+            sheets_client.update_purchase_payment(
+                company_name=request.company_name,
+                year_month=request.year_month,
+                payment_amount=request.payment_amount,
+                add_mode=request.add_mode,
+            )
+        except Exception as sheet_err:
+            sheet_warning = f"シート書込エラー（DB は正常）: {sheet_err}"
+            print(f"    [SHEET_WRITE] 仕入入金シート更新エラー（続行）: {sheet_err}")
 
         action = "加算" if request.add_mode else "更新"
+        message = f"{action}完了: {request.company_name} の {request.year_month} 消滅"
+        if sheet_warning:
+            message += f"\n⚠️ {sheet_warning}"
+
         return UpdatePurchasePaymentResponse(
             success=True,
-            message=f"{action}完了: {request.company_name} の {request.year_month} 消滅",
-            previous_value=result["previous_value"],
-            new_value=result["new_value"],
+            message=message,
+            previous_value=previous_value,
+            new_value=new_value,
         )
 
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

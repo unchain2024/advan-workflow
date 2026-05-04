@@ -9,6 +9,7 @@ from src.sheets_client import GoogleSheetsClient, PreviousBilling, _find_company
 from src.pdf_extractor import DeliveryNote, DeliveryItem
 from src.database import MonthlyItemsDB
 from src.config import BILLING_SPREADSHEET_ID
+from src.canonical_companies import list_canonicals
 
 
 def _extract_year_from_year_month(year_month: str) -> int:
@@ -106,8 +107,18 @@ async def save_billing(request: SaveBillingRequest):
             except (ValueError, IndexError):
                 pass
         canonical = sheets_client.get_canonical_company_name(company_name, year=target_year)
-        if canonical:
-            company_name = canonical
+        if not canonical:
+            # Phase 1: canonical 不一致は 400 reject。auto-add 厳禁、フロントの会社ピッカーに戻す
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "company_not_matched",
+                    "extracted_name": company_name,
+                    "candidates": list_canonicals("sales"),
+                    "message": f"会社名 '{company_name}' が canonical マスターに一致しませんでした。候補から選択してください。",
+                },
+            )
+        company_name = canonical
 
         # PreviousBillingオブジェクトを再構築
         previous_billing = PreviousBilling(
@@ -187,16 +198,28 @@ async def save_billing(request: SaveBillingRequest):
                 sheet_errors.append(f"{delivery_note.slip_number}: {sheet_err}")
                 print(f"    シート書込エラー（続行）: {sheet_err}")
 
-        message = f"**売上集計表** の {company_name} ({request.year_month}) を更新しました（{saved_count}件）"
+        # 成功メッセージ: DB 保存ベース。シート障害があれば付記する（DB-as-truth）
         if sheet_errors:
-            message += f"\n⚠️ シート書込で {len(sheet_errors)} 件のエラー: {'; '.join(sheet_errors)}"
+            message = (
+                f"DB保存成功（{saved_count}件）。"
+                f"\n⚠️ シート書込で {len(sheet_errors)} 件のエラー（DB は正常）: "
+                f"{'; '.join(sheet_errors)}"
+            )
+        else:
+            message = (
+                f"DB保存成功（{saved_count}件）。"
+                f"\n**売上集計表** の {company_name} ({request.year_month}) を更新しました。"
+            )
 
         return {
             "success": True,
             "message": message,
             "saved_count": saved_count,
+            "sheet_errors": sheet_errors,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
