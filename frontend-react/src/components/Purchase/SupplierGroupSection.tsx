@@ -43,6 +43,14 @@ interface Props {
   onSetSupplierFilter: (groupIndex: number, filter: string) => void;
   onSetEditingSupplierIndex: (groupIndex: number, idx: number | null) => void;
   onEditSupplierNameForGroup: (groupIndex: number, newName: string) => void;
+  // Phase 5d: 手動編集 + 行削除
+  onUpdateInvoiceField: (
+    groupIndex: number,
+    invoiceIndex: number,
+    field: 'date' | 'slip_number' | 'subtotal' | 'tax' | 'total' | 'is_taxable',
+    value: string | number | boolean,
+  ) => void;
+  onDeleteInvoice: (groupIndex: number, invoiceIndex: number) => void;
 }
 
 export const SupplierGroupSection: React.FC<Props> = ({
@@ -56,6 +64,8 @@ export const SupplierGroupSection: React.FC<Props> = ({
   onSetSupplierFilter,
   onSetEditingSupplierIndex,
   onEditSupplierNameForGroup,
+  onUpdateInvoiceField,
+  onDeleteInvoice,
 }) => {
   const totalSubtotal = group.invoices.reduce((s, i) => s + i.subtotal, 0);
   const totalTax = group.invoices.reduce((s, i) => s + i.tax, 0);
@@ -215,30 +225,75 @@ export const SupplierGroupSection: React.FC<Props> = ({
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <span
-                  className={`px-2 py-1 rounded text-xs font-medium ${
-                    invoice.is_taxable ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                {/* Phase 5d: 課税/非課税を toggle ボタンに */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateInvoiceField(groupIndex, idx, 'is_taxable', !invoice.is_taxable)
+                  }
+                  className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
+                    invoice.is_taxable
+                      ? 'bg-green-100 text-green-800 border-green-300 hover:bg-green-200'
+                      : 'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200'
                   }`}
+                  title="クリックで切替"
                 >
                   {invoice.is_taxable ? '課税' : '非課税'}
-                </span>
+                </button>
+                {/* Phase 5d: 行削除ボタン */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `この納品書 (#${idx + 1}: ${invoice.slip_number || '伝票番号なし'} / ¥${invoice.total.toLocaleString()}) を削除しますか？`
+                      )
+                    ) {
+                      onDeleteInvoice(groupIndex, idx);
+                    }
+                  }}
+                  className="px-2 py-1 rounded text-xs font-medium border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+                  title="この納品書を削除"
+                >
+                  ✕ 削除
+                </button>
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-4 mb-4 text-sm">
               <div>
-                <span className="text-gray-500">日付:</span>
-                <p className="font-medium text-gray-800">{invoice.date}</p>
+                <label className="text-gray-500 block mb-1">日付:</label>
+                <input
+                  type="text"
+                  value={invoice.date}
+                  onChange={(e) =>
+                    onUpdateInvoiceField(groupIndex, idx, 'date', e.target.value)
+                  }
+                  placeholder="YYYY/MM/DD"
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
               </div>
               <div>
-                <span className="text-gray-500">伝票番号:</span>
-                <p className="font-medium text-gray-800">{invoice.slip_number}</p>
+                <label className="text-gray-500 block mb-1">伝票番号:</label>
+                <input
+                  type="text"
+                  value={invoice.slip_number}
+                  onChange={(e) =>
+                    onUpdateInvoiceField(groupIndex, idx, 'slip_number', e.target.value)
+                  }
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
               </div>
               <div>
-                <span className="text-gray-500">合計:</span>
-                <p className="font-medium text-gray-800 text-lg">
-                  ¥{invoice.total.toLocaleString()}
-                </p>
+                <label className="text-gray-500 block mb-1">合計:</label>
+                <input
+                  type="number"
+                  value={invoice.total}
+                  onChange={(e) =>
+                    onUpdateInvoiceField(groupIndex, idx, 'total', Number(e.target.value) || 0)
+                  }
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-gray-800 font-medium text-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
               </div>
             </div>
 
@@ -274,18 +329,41 @@ export const SupplierGroupSection: React.FC<Props> = ({
             )}
 
             <div className="mt-4 pt-3 border-t border-gray-200">
-              <div className="flex justify-end gap-6 text-sm">
+              <div className="flex justify-end gap-6 text-sm items-end">
                 <div>
-                  <span className="text-gray-500">小計: </span>
-                  <span className="font-medium">¥{invoice.subtotal.toLocaleString()}</span>
+                  <label className="text-gray-500 block mb-1">小計:</label>
+                  <input
+                    type="number"
+                    value={invoice.subtotal}
+                    onChange={(e) =>
+                      onUpdateInvoiceField(
+                        groupIndex,
+                        idx,
+                        'subtotal',
+                        Number(e.target.value) || 0,
+                      )
+                    }
+                    className="w-32 border border-gray-300 rounded px-2 py-1 text-gray-800 font-medium text-right focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
                 </div>
                 <div>
-                  <span className="text-gray-500">消費税: </span>
-                  <span className="font-medium">¥{invoice.tax.toLocaleString()}</span>
+                  <label className="text-gray-500 block mb-1">消費税:</label>
+                  <input
+                    type="number"
+                    value={invoice.tax}
+                    onChange={(e) =>
+                      onUpdateInvoiceField(
+                        groupIndex,
+                        idx,
+                        'tax',
+                        Number(e.target.value) || 0,
+                      )
+                    }
+                    className="w-32 border border-gray-300 rounded px-2 py-1 text-gray-800 font-medium text-right focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
                 </div>
-                <div>
-                  <span className="text-gray-500">合計: </span>
-                  <span className="font-bold text-lg">¥{invoice.total.toLocaleString()}</span>
+                <div className="text-xs text-gray-400 self-center pb-1">
+                  ※ 小計+消費税 = ¥{(invoice.subtotal + invoice.tax).toLocaleString()}
                 </div>
               </div>
             </div>

@@ -210,6 +210,41 @@ export const PurchasePage: React.FC = () => {
     });
   };
 
+  // Phase 5d: 個別 invoice の項目編集
+  const handleUpdateInvoiceField = (
+    groupIndex: number,
+    invoiceIndex: number,
+    field: 'date' | 'slip_number' | 'subtotal' | 'tax' | 'total' | 'is_taxable',
+    value: string | number | boolean,
+  ) => {
+    setGroups((prev) =>
+      prev.map((g, gi) => {
+        if (gi !== groupIndex) return g;
+        return {
+          ...g,
+          invoices: g.invoices.map((inv, ii) =>
+            ii === invoiceIndex ? { ...inv, [field]: value as never } : inv,
+          ),
+        };
+      }),
+    );
+  };
+
+  // Phase 5d: 行削除（重複行の手動削除）
+  const handleDeleteInvoice = (groupIndex: number, invoiceIndex: number) => {
+    setGroups((prev) => {
+      return prev
+        .map((g, gi) => {
+          if (gi !== groupIndex) return g;
+          const newInvoices = g.invoices.filter((_, ii) => ii !== invoiceIndex);
+          const newPdfUrls = g.pdfUrls.filter((_, ii) => ii !== invoiceIndex);
+          return { ...g, invoices: newInvoices, pdfUrls: newPdfUrls };
+        })
+        // グループ内の invoice が 0 になったらグループ自体も削除
+        .filter((g) => g.invoices.length > 0);
+    });
+  };
+
   return (
     <div>
       <h1 className="text-4xl font-bold text-gray-800 mb-8">仕入れ計上</h1>
@@ -383,6 +418,8 @@ export const PurchasePage: React.FC = () => {
               onSetSupplierFilter={(gi, f) => updateGroup(gi, { supplierFilter: f })}
               onSetEditingSupplierIndex={(gi, ix) => updateGroup(gi, { editingSupplierIndex: ix })}
               onEditSupplierNameForGroup={handleEditSupplierNameForGroup}
+              onUpdateInvoiceField={handleUpdateInvoiceField}
+              onDeleteInvoice={handleDeleteInvoice}
             />
           ))}
         </>
