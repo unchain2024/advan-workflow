@@ -24,6 +24,7 @@ import type {
   DBDeliveryNote,
   PreviousBilling,
   CompanyInfo,
+  DeliveryNote,
 } from '../types';
 
 // 本番環境ではVITE_API_URLを使用、開発環境では/api（Viteプロキシ経由）
@@ -82,6 +83,26 @@ export const regenerateInvoice = async (
 ): Promise<RegenerateInvoiceResponse> => {
   const response = await apiClient.post<RegenerateInvoiceResponse>(
     '/regenerate-invoice',
+    data
+  );
+  return response.data;
+};
+
+// Phase A: グループ統合請求書PDFを生成
+export interface RegenerateGroupInvoiceRequest {
+  company_name: string;
+  year_month: string;
+  delivery_notes: DeliveryNote[];
+  company_info: CompanyInfo | null;
+  previous_billing: PreviousBilling;
+  sales_person?: string;
+}
+
+export const regenerateGroupInvoice = async (
+  data: RegenerateGroupInvoiceRequest
+): Promise<RegenerateInvoiceResponse> => {
+  const response = await apiClient.post<RegenerateInvoiceResponse>(
+    '/regenerate-group-invoice',
     data
   );
   return response.data;

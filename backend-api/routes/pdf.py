@@ -88,6 +88,16 @@ class RegenerateInvoiceResponse(BaseModel):
     invoice_filename: str
 
 
+class RegenerateGroupInvoiceRequest(BaseModel):
+    """グループ統合請求書PDF生成 (Phase B/C: 複数納品書を1つのPDFに合算)"""
+    company_name: str
+    year_month: str  # "YYYY-MM" or "YYYY年M月"
+    delivery_notes: list[DeliveryNoteResponse]
+    company_info: Optional[CompanyInfoResponse]
+    previous_billing: PreviousBillingResponse
+    sales_person: Optional[str] = None
+
+
 def _extract_filename_keywords(filename: str) -> list[str]:
     """ファイル名から会社名に関連するキーワードを抽出
 
@@ -445,6 +455,120 @@ async def regenerate_invoice(request: RegenerateInvoiceRequest):
         )
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/regenerate-group-invoice", response_model=RegenerateInvoiceResponse)
+async def regenerate_group_invoice(request: RegenerateGroupInvoiceRequest):
+    """グループ統合請求書PDFを生成 (Phase B/C)
+
+    複数の納品書を1つの統合PDFに合算する。右プレビューでグループ全体を表示するため、
+    およびグループ merge 後の正しいPDF生成のため。
+    """
+    try:
+        # 会社名は frontend で canonical 化済前提（picker 選択後に呼ばれる）
+        # 念のため canonical lookup を試みる（失敗時は raw 名のまま継続）
+        company_name = request.company_name
+        try:
+            sheets_client = GoogleSheetsClient()
+            target_year = None
+            if request.delivery_notes and request.delivery_notes[0].date:
+                try:
+                    target_year = int(request.delivery_notes[0].date.split('/')[0])
+                except (ValueError, IndexError):
+                    pass
+            canonical = sheets_client.get_canonical_company_name(company_name, year=target_year)
+            if canonical:
+                company_name = canonical
+        except Exception:
+            pass
+
+        # year_month を "YYYY年M月" 形式に正規化
+        year_month = request.year_month
+        if '-' in year_month and '年' not in year_month:
+            parts = year_month.split('-')
+            year_month = f"{int(parts[0])}年{int(parts[1])}月"
+
+        # delivery_notes を DeliveryNote dataclass に変換
+        notes: list[DeliveryNote] = []
+        for n in request.delivery_notes:
+            items = [
+                DeliveryItem(
+                    slip_number=item.slip_number,
+                    product_code=item.product_code,
+                    product_name=item.product_name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    amount=item.amount,
+                )
+                for item in n.items
+            ]
+            notes.append(
+                DeliveryNote(
+                    date=n.date,
+                    company_name=company_name,
+                    slip_number=n.slip_number,
+                    items=items,
+                    subtotal=n.subtotal,
+                    tax=n.tax,
+                    total=n.total,
+                    payment_received=n.payment_received,
+                )
+            )
+
+        if not notes:
+            raise HTTPException(status_code=400, detail="delivery_notes が空です")
+
+        # CompanyInfo / PreviousBilling 再構築
+        from src.sheets_client import CompanyInfo, PreviousBilling as PrevBilling
+
+        company_info = None
+        if request.company_info:
+            company_info = CompanyInfo(
+                company_name=request.company_info.company_name,
+                postal_code=request.company_info.postal_code,
+                address=request.company_info.address,
+                department=request.company_info.department,
+            )
+        previous_billing = PrevBilling(
+            previous_amount=request.previous_billing.previous_amount,
+            payment_received=request.previous_billing.payment_received,
+            carried_over=request.previous_billing.carried_over,
+        )
+
+        # 出力先
+        output_dir = Path(__file__).parent.parent.parent / "output"
+        output_dir.mkdir(exist_ok=True)
+        safe_company_name = company_name.replace("/", "_").replace("\\", "_")
+        # ファイル名は会社+年月で固定 (グループは1社1月で1つ)
+        ym_safe = year_month.replace("/", "").replace(" ", "")
+        invoice_filename = f"group_invoice_{safe_company_name}_{ym_safe}.pdf"
+        invoice_path = output_dir / invoice_filename
+        if invoice_path.exists():
+            invoice_path.unlink()
+
+        # 統合PDF生成
+        invoice_generator = InvoiceGenerator()
+        invoice_generator.generate_monthly(
+            delivery_notes=notes,
+            company_name=company_name,
+            year_month=year_month,
+            company_info=company_info,
+            previous_billing=previous_billing,
+            output_path=invoice_path,
+        )
+
+        timestamp = int(time.time())
+        invoice_url = f"/output/{invoice_filename}?t={timestamp}"
+        return RegenerateInvoiceResponse(
+            invoice_url=invoice_url,
+            invoice_filename=invoice_path.name,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

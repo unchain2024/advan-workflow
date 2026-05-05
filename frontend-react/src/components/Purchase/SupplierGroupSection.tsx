@@ -30,6 +30,8 @@ export interface PurchaseGroup {
   requestId: string;
   // エラー（per group）
   error: string | null;
+  // Phase C: マージ/canonical 解決中フラグ (ピッカー連打抑制)
+  isMerging?: boolean;
 }
 
 interface Props {
@@ -105,13 +107,18 @@ export const SupplierGroupSection: React.FC<Props> = ({
               仕入先「{group.extractedSupplierName}」がマスターに登録されていません。正しい仕入先を選択してください：
             </p>
 
+            {group.isMerging && (
+              <p className="text-sm text-blue-700 font-medium">処理中...</p>
+            )}
+
             <div className="mt-3">
               <input
                 type="text"
                 value={group.supplierFilter}
                 onChange={(e) => onSetSupplierFilter(groupIndex, e.target.value)}
                 placeholder="仕入先名で絞り込み..."
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                disabled={group.isMerging}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
               />
             </div>
 
@@ -119,7 +126,8 @@ export const SupplierGroupSection: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => onSetShowAllSupplierCandidates(groupIndex, !group.showAllSupplierCandidates)}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+                disabled={group.isMerging}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium cursor-pointer disabled:opacity-50"
               >
                 {group.showAllSupplierCandidates
                   ? '▲ 折りたたむ'
@@ -138,7 +146,8 @@ export const SupplierGroupSection: React.FC<Props> = ({
                         key={name}
                         type="button"
                         onClick={() => onSelectSupplier(groupIndex, name)}
-                        className="block w-full text-left px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-gray-800"
+                        disabled={group.isMerging}
+                        className="block w-full text-left px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {name}
                       </button>

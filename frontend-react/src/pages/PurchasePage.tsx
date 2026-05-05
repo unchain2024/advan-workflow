@@ -209,18 +209,59 @@ export const PurchasePage: React.FC = () => {
     }
   };
 
+  // Phase C: 同一 canonical の既存グループがあれば merge、無ければ rename
   const handleSelectSupplier = (groupIndex: number, selectedName: string) => {
     const group = groups[groupIndex];
-    if (!group) return;
-    updateGroup(groupIndex, {
-      supplierName: selectedName,
-      invoices: group.invoices.map((inv) => ({ ...inv, supplier_name: selectedName })),
-      supplierMismatch: false,
-      supplierCandidates: [],
-      extractedSupplierName: '',
-      requestId: crypto.randomUUID(),
-      error: null,
-    });
+    if (!group || group.isMerging) return; // 連打抑制
+
+    // 全 invoice の supplier_name を更新
+    const updatedInvoices = group.invoices.map((inv) => ({
+      ...inv,
+      supplier_name: selectedName,
+    }));
+
+    // 既存グループに同 canonical があるか
+    const targetIndex = groups.findIndex(
+      (g, i) => i !== groupIndex && !g.supplierMismatch && g.supplierName === selectedName
+    );
+
+    if (targetIndex >= 0) {
+      // === merge ===
+      setGroups((prev) =>
+        prev
+          .map((g, i) => {
+            if (i === targetIndex) {
+              return {
+                ...g,
+                invoices: [...g.invoices, ...updatedInvoices],
+                pdfUrls: [...g.pdfUrls, ...group.pdfUrls],
+                isSaved: false,
+                showDuplicateDialog: false,
+                duplicateNotes: [],
+                editingSupplierIndex: null,
+                requestId: crypto.randomUUID(),
+                isMerging: false,
+                error: null,
+              };
+            }
+            return g;
+          })
+          .filter((_, i) => i !== groupIndex)
+      );
+      setError(null);
+    } else {
+      // === rename ===
+      updateGroup(groupIndex, {
+        supplierName: selectedName,
+        invoices: updatedInvoices,
+        supplierMismatch: false,
+        supplierCandidates: [],
+        extractedSupplierName: '',
+        requestId: crypto.randomUUID(),
+        error: null,
+        isMerging: false,
+      });
+    }
   };
 
   // インライン編集（グループ全体に反映 — グループ概念に合わせて挙動変更）

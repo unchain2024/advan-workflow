@@ -36,6 +36,8 @@ export interface CompanyGroup {
   editingNoteIndex: number;
   // idempotency
   requestId: string;
+  // Phase C: マージ/canonical 解決中フラグ (ピッカー連打抑制)
+  isMerging?: boolean;
 }
 
 interface Props {
@@ -112,6 +114,12 @@ export const CompanyGroupSection: React.FC<Props> = ({
               会社名「{group.extractedCompanyName}」がスプレッドシートに見つかりません。正しい会社名を選択してください：
             </p>
 
+            {group.isMerging && (
+              <p className="text-sm text-blue-700 font-medium">
+                処理中... 統合請求書を再生成しています
+              </p>
+            )}
+
             {group.suggestedCandidates.length > 0 && (
               <div className="mt-3">
                 <p className="text-sm font-medium text-gray-600 mb-1">類似する会社名：</p>
@@ -120,7 +128,8 @@ export const CompanyGroupSection: React.FC<Props> = ({
                     <button
                       key={name}
                       onClick={() => onSelectCompany(groupIndex, name)}
-                      className="block w-full text-left px-4 py-2 bg-blue-50 border-2 border-blue-400 rounded-lg hover:bg-blue-100 transition-colors text-gray-800 font-medium"
+                      disabled={group.isMerging}
+                      className="block w-full text-left px-4 py-2 bg-blue-50 border-2 border-blue-400 rounded-lg hover:bg-blue-100 transition-colors text-gray-800 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {name}
                     </button>
@@ -132,7 +141,8 @@ export const CompanyGroupSection: React.FC<Props> = ({
             <div className="mt-3">
               <button
                 onClick={() => onSetShowAllCandidates(groupIndex, !group.showAllCandidates)}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+                disabled={group.isMerging}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium cursor-pointer disabled:opacity-50"
               >
                 {group.showAllCandidates
                   ? '▲ 閉じる'
@@ -146,7 +156,8 @@ export const CompanyGroupSection: React.FC<Props> = ({
                       <button
                         key={name}
                         onClick={() => onSelectCompany(groupIndex, name)}
-                        className="block w-full text-left px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-gray-800"
+                        disabled={group.isMerging}
+                        className="block w-full text-left px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {name}
                       </button>

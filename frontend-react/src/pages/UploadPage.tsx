@@ -7,7 +7,11 @@ import {
   CompanyGroupSection,
   type CompanyGroup,
 } from '../components/Upload/CompanyGroupSection';
-import { processPDF, regenerateInvoice, getCompanyBillingInfo } from '../api/client';
+import {
+  processPDF,
+  regenerateGroupInvoice,
+  getCompanyBillingInfo,
+} from '../api/client';
 import { useAppStore } from '../store/useAppStore';
 import type {
   DeliveryNote,
@@ -101,6 +105,7 @@ export const UploadPage: React.FC = () => {
     setGroups((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, ...patch } : g)));
   };
 
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { 'application/pdf': ['.pdf'] },
     multiple: true,
@@ -169,6 +174,35 @@ export const UploadPage: React.FC = () => {
       setProgressMessage(
         `全ての処理が完了しました（${newGroups.length} 社, ${results.length} 件）`
       );
+
+      // Phase B: 各グループの統合請求書PDFを生成 (canonical 確定済グループのみ)
+      // 並列実行 + 結果が揃ってから state 一括更新
+      const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+      const regenResults = await Promise.all(
+        newGroups.map(async (g) => {
+          if (g.companyMismatch || !g.deliveryNotes.length) return null;
+          try {
+            const result = await regenerateGroupInvoice({
+              company_name: g.companyName,
+              year_month: yearMonth,
+              delivery_notes: g.deliveryNotes,
+              company_info: g.companyInfo,
+              previous_billing: g.previousBilling,
+              sales_person: salesPerson,
+            });
+            return result.invoice_url;
+          } catch (e) {
+            console.error('グループ統合請求書生成失敗:', g.companyName, e);
+            return null;
+          }
+        })
+      );
+      // 結果を groups に反映
+      setGroups((prev) =>
+        prev.map((g, i) =>
+          regenResults[i] ? { ...g, invoicePath: regenResults[i]! } : g
+        )
+      );
     } catch (err: any) {
       const errorMessage =
         err?.response?.data?.detail?.error || err.message || '処理中にエラーが発生しました';
@@ -181,50 +215,119 @@ export const UploadPage: React.FC = () => {
   };
 
   // canonical mismatch picker から会社を選択
+  // Phase C: 同一 canonical の既存グループがあれば merge、無ければ rename
   const handleSelectCompany = async (groupIndex: number, selectedName: string) => {
     const group = groups[groupIndex];
-    if (!group) return;
+    if (!group || group.isMerging) return; // 連打抑制
 
-    // 全納品書の company_name を更新
-    const updatedNotes = group.deliveryNotes.map((n) => ({ ...n, company_name: selectedName }));
+    // 連打抑制フラグ ON
+    updateGroup(groupIndex, { isMerging: true });
 
-    updateGroup(groupIndex, {
-      deliveryNotes: updatedNotes,
-      companyName: selectedName,
-      companyMismatch: false,
-      companyCandidates: [],
-      suggestedCandidates: [],
-      showAllCandidates: false,
-      requestId: crypto.randomUUID(),
-    });
-
-    // 正しい会社名で前月請求情報＋会社情報を再取得
     const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-    try {
-      const info = await getCompanyBillingInfo(selectedName, yearMonth);
-      updateGroup(groupIndex, {
-        previousBilling: info.previous_billing,
-        companyInfo: info.company_info,
-      });
 
-      // 編集対象の納品書だけ請求書 PDF を再生成（編集 UI と同じ挙動）
-      const target = updatedNotes[updatedNotes.length - 1];
-      if (target) {
+    try {
+      // 同一 canonical を持つ既存グループ (現在のグループ自身は除く) を検索
+      const targetIndex = groups.findIndex(
+        (g, i) => i !== groupIndex && !g.companyMismatch && g.companyName === selectedName
+      );
+
+      // 全納品書の company_name を更新
+      const updatedNotes = group.deliveryNotes.map((n) => ({
+        ...n,
+        company_name: selectedName,
+      }));
+
+      // 前月請求情報＋会社情報を取得 (canonical 確定後)
+      let prevBilling = group.previousBilling;
+      let companyInfo = group.companyInfo;
+      try {
+        const info = await getCompanyBillingInfo(selectedName, yearMonth);
+        prevBilling = info.previous_billing;
+        companyInfo = info.company_info;
+      } catch (err) {
+        console.error('会社情報の再取得に失敗:', err);
+      }
+
+      if (targetIndex >= 0) {
+        // === merge 経路 ===
+        // 既存グループに deliveryNotes / pdfUrls を append、現在のグループ削除
+        const target = groups[targetIndex];
+        const mergedNotes = [...target.deliveryNotes, ...updatedNotes];
+        const mergedPdfUrls = [...target.deliveryPdfUrls, ...group.deliveryPdfUrls];
+
+        // 統合請求書 PDF を再生成 (合算合計を反映)
+        let invoicePath = target.invoicePath;
         try {
-          const result = await regenerateInvoice({
-            delivery_note: target,
-            company_info: info.company_info,
-            previous_billing: info.previous_billing,
+          const result = await regenerateGroupInvoice({
+            company_name: selectedName,
             year_month: yearMonth,
+            delivery_notes: mergedNotes,
+            company_info: target.companyInfo ?? companyInfo,
+            previous_billing: target.previousBilling,
             sales_person: salesPerson,
           });
-          updateGroup(groupIndex, { invoicePath: result.invoice_url });
-        } catch (regenErr) {
-          console.error('請求書再生成に失敗:', regenErr);
+          invoicePath = result.invoice_url;
+        } catch (e) {
+          console.error('merge後の統合請求書生成失敗:', e);
         }
+
+        // state を一括更新: target を更新、現在のグループ削除
+        setGroups((prev) =>
+          prev
+            .map((g, i) => {
+              if (i === targetIndex) {
+                return {
+                  ...g,
+                  deliveryNotes: mergedNotes,
+                  deliveryPdfUrls: mergedPdfUrls,
+                  invoicePath,
+                  isSaved: false,
+                  showEditForm: false,
+                  editingNoteIndex: 0,
+                  requestId: crypto.randomUUID(),
+                  isMerging: false,
+                };
+              }
+              return g;
+            })
+            .filter((_, i) => i !== groupIndex)
+        );
+        setError(null);
+      } else {
+        // === rename 経路 (既存グループに canonical 一致なし) ===
+        // 統合請求書 PDF を生成
+        let invoicePath = group.invoicePath;
+        try {
+          const result = await regenerateGroupInvoice({
+            company_name: selectedName,
+            year_month: yearMonth,
+            delivery_notes: updatedNotes,
+            company_info: companyInfo,
+            previous_billing: prevBilling,
+            sales_person: salesPerson,
+          });
+          invoicePath = result.invoice_url;
+        } catch (e) {
+          console.error('rename後の統合請求書生成失敗:', e);
+        }
+
+        updateGroup(groupIndex, {
+          deliveryNotes: updatedNotes,
+          companyName: selectedName,
+          companyInfo,
+          previousBilling: prevBilling,
+          invoicePath,
+          companyMismatch: false,
+          companyCandidates: [],
+          suggestedCandidates: [],
+          showAllCandidates: false,
+          requestId: crypto.randomUUID(),
+          isMerging: false,
+        });
       }
     } catch (err) {
-      console.error('会社情報の再取得に失敗:', err);
+      console.error('会社選択処理エラー:', err);
+      updateGroup(groupIndex, { isMerging: false });
     }
   };
 
@@ -254,22 +357,26 @@ export const UploadPage: React.FC = () => {
 
     const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
     try {
-      const result = await regenerateInvoice({
-        delivery_note: data.deliveryNote,
-        company_info: data.companyInfo,
-        previous_billing: data.previousBilling,
-        year_month: yearMonth,
-        sales_person: salesPerson,
-      });
-
       // グループ内の該当納品書を更新（slip_number で特定）
       const updatedNotes = group.deliveryNotes.map((n) =>
         n.slip_number === data.deliveryNote.slip_number ? data.deliveryNote : n
       );
 
+      // Phase B: 単一 note ではなくグループ統合 PDF を再生成 (右プレビューが
+      // グループ全体を反映)
+      const result = await regenerateGroupInvoice({
+        company_name: group.companyName,
+        year_month: yearMonth,
+        delivery_notes: updatedNotes,
+        company_info: data.companyInfo,
+        previous_billing: data.previousBilling,
+        sales_person: salesPerson,
+      });
+
       updateGroup(groupIndex, {
         deliveryNotes: updatedNotes,
         previousBilling: data.previousBilling,
+        companyInfo: data.companyInfo,
         invoicePath: result.invoice_url,
         isSaved: false,
         showEditForm: false,
