@@ -229,7 +229,11 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
             )
             if not canonical:
                 # canonical 化失敗 → UI に picker を出してもらうために候補を返す
-                print(f"  [仕入canonical不一致] '{raw_supplier}' → 候補返却")
+                # detected_indicators は LLM が抽出したまま保持される
+                print(
+                    f"  [仕入canonical不一致] '{raw_supplier}' → 候補返却 "
+                    f"(LLM抽出 is_taxable={inv.is_taxable}, indicators={inv.detected_indicators})"
+                )
                 canonical_match_results.append((False, list_canonicals('purchase')))
                 continue
 
