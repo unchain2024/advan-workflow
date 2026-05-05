@@ -320,18 +320,32 @@ class _PurchaseTaxRule(dict):
 
 
 PURCHASE_TAXABILITY_RULES: Final[dict[str, dict]] = {
+    # 「請求書一括方式」: 納品書には消費税が出ず、後日まとめて請求 → tax=0 は判定根拠にならない
+    # キーワードのみで非課税判定
     '（株）ヴェスト': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['免税', '海外'],
+        'tax_zero_means_nontaxable': False,
+    },
+    '（株）マテックス': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['海外', '海外分'],
+        'tax_zero_means_nontaxable': False,
+    },
+    # 「都度請求方式」: 納品書に消費税が直接出る → tax=0 は非課税の強いシグナル
+    'リーウェイジャパン㈱': {
         'default_taxable': True,
         'nontaxable_indicators': ['免税', '海外'],
         'tax_zero_means_nontaxable': True,
         'min_total_for_zero_tax': 100,
     },
-    '（株）マテックス': {
+    '㈱フクイ': {
         'default_taxable': True,
-        'nontaxable_indicators': ['海外', '海外分'],
+        'nontaxable_indicators': ['非課税取引', '免税', '海外'],
         'tax_zero_means_nontaxable': True,
-        'min_total_for_zero_tax': 100,
+        'min_total_for_zero_tax': 10,  # フクイ注釈「合計10円未満の取引は税0」
     },
+    # キーワード優先、tax=0 は補助的シグナル
     '㈱有延商店': {
         'default_taxable': True,
         'nontaxable_indicators': ['送り', '海外', 'ベトナム', '中国', '輸出'],
@@ -341,18 +355,6 @@ PURCHASE_TAXABILITY_RULES: Final[dict[str, dict]] = {
     '日本マート㈱': {
         'default_taxable': True,
         'nontaxable_indicators': ['不課税', '輸出免税', '海外'],
-        'tax_zero_means_nontaxable': True,
-        'min_total_for_zero_tax': 100,
-    },
-    '㈱フクイ': {
-        'default_taxable': True,
-        'nontaxable_indicators': ['非課税取引', '免税', '海外'],
-        'tax_zero_means_nontaxable': True,
-        'min_total_for_zero_tax': 10,  # フクイ注釈通り「合計10円未満は税0」
-    },
-    'リーウェイジャパン㈱': {
-        'default_taxable': True,
-        'nontaxable_indicators': ['免税', '海外'],
         'tax_zero_means_nontaxable': True,
         'min_total_for_zero_tax': 100,
     },
