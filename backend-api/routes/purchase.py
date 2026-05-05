@@ -16,6 +16,7 @@ from src.canonical_companies import (
     list_canonicals,
     get_purchase_taxability_hint,
     resolve_purchase_taxability,
+    PURCHASE_TAXABILITY_RULES,
 )
 
 router = APIRouter()
@@ -60,6 +61,8 @@ class PurchaseNoteRequest(BaseModel):
     tax: int
     total: int
     is_taxable: bool = True
+    # process-pdf 段階で LLM が検出したキーワード。save 時に Layer 3 再適用に使用
+    detected_indicators: list[str] = []
 
 
 class SavePurchaseRequest(BaseModel):
@@ -354,6 +357,9 @@ async def save_purchase(request: SavePurchaseRequest):
             year_month_str = f"{int(parts[0])}年{int(parts[1])}月"
 
         # 4. PurchaseInvoiceオブジェクトリストを構築
+        # Phase 5d': save 時にも canonical 化済 company_name を使って Layer 2/3 を再適用する。
+        # process-pdf 段階で canonical 化失敗してピッカー選択された invoice は、選択時点で
+        # supplier_name は更新されたが is_taxable は LLM 判定のままなので、ここで補正する。
         purchase_invoices = []
         for note_req in request.purchase_notes:
             items = [
@@ -367,6 +373,32 @@ async def save_purchase(request: SavePurchaseRequest):
                 for item in note_req.items
             ]
 
+            # Layer 2: シート固定の hint があれば上書き
+            is_taxable = note_req.is_taxable
+            hint = get_purchase_taxability_hint(company_name)
+            if hint is not None and hint != is_taxable:
+                print(
+                    f"  [save時 課税区分上書き L2] '{company_name}' slip={note_req.slip_number}: "
+                    f"フロント送信 is_taxable={is_taxable} → シート定義 {hint}"
+                )
+                is_taxable = hint
+
+            # Layer 3: 動的ルール (混在会社) を再適用
+            if company_name in PURCHASE_TAXABILITY_RULES:
+                final_taxable, reason = resolve_purchase_taxability(
+                    canonical_name=company_name,
+                    detected_indicators=note_req.detected_indicators,
+                    tax=note_req.tax,
+                    total=note_req.total,
+                    llm_is_taxable=is_taxable,
+                )
+                if final_taxable != is_taxable:
+                    print(
+                        f"  [save時 課税区分上書き L3] '{company_name}' slip={note_req.slip_number}: "
+                        f"{is_taxable} → ルール判定 {final_taxable} ({reason}, indicators={note_req.detected_indicators})"
+                    )
+                is_taxable = final_taxable
+
             purchase_invoices.append(PurchaseInvoice(
                 date=note_req.date,
                 supplier_name=company_name,
@@ -375,7 +407,8 @@ async def save_purchase(request: SavePurchaseRequest):
                 subtotal=note_req.subtotal,
                 tax=note_req.tax,
                 total=note_req.total,
-                is_taxable=note_req.is_taxable,
+                is_taxable=is_taxable,
+                detected_indicators=note_req.detected_indicators,
             ))
 
         # 5. 重複チェック

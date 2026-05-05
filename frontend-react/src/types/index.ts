@@ -195,6 +195,7 @@ export interface PurchaseNoteRequest {
   tax: number;
   total: number;
   is_taxable: boolean;
+  detected_indicators?: string[];
 }
 
 export interface SavePurchaseRequest {

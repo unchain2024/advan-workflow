@@ -153,6 +153,7 @@ export const PurchasePage: React.FC = () => {
           tax: inv.tax,
           total: inv.total,
           is_taxable: inv.is_taxable,
+          detected_indicators: inv.detected_indicators || [],
         })),
         sales_person: salesPerson,
         request_id: group.requestId,
