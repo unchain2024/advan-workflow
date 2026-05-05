@@ -7,17 +7,19 @@ import {
   generateMonthlyInvoice,
   getDBCompanies,
   getDBSalesPersons,
-  getDeliveryNotes,
-  updateDeliveryNote,
+  getDeliveryNotesWithItems,
+  updateDeliveryNoteWithItems,
   syncSheetsFromDB,
+  type DeliveryNoteWithItems,
+  type DeliveryItemEdit,
 } from '../api/client';
-import type { GenerateMonthlyInvoiceResponse, DBDeliveryNote } from '../types';
+import type { GenerateMonthlyInvoiceResponse } from '../types';
 
-interface EditableNote extends DBDeliveryNote {
-  edited_subtotal: number;
-  edited_tax: number;
-  edited_total: number;
+interface EditableNote extends DeliveryNoteWithItems {
+  edited_date: string;
+  edited_items: DeliveryItemEdit[];
   saving?: boolean;
+  expanded?: boolean;
 }
 
 const PAGES_PER_BATCH = 5;
@@ -86,16 +88,16 @@ export const MonthlyInvoicePage: React.FC = () => {
       const response = await generateMonthlyInvoice(companyName, yearMonth, salesPerson);
       setResult(response);
 
-      // 納品書 inline 編集用の一覧を取得
+      // 納品書 inline 編集用の一覧 (明細付き) を取得
       try {
         setNotesLoading(true);
-        const notesRes = await getDeliveryNotes(companyName, yearMonth);
+        const notesRes = await getDeliveryNotesWithItems(companyName, yearMonth);
         setEditableNotes(
           notesRes.notes.map((n) => ({
             ...n,
-            edited_subtotal: n.subtotal,
-            edited_tax: n.tax,
-            edited_total: n.total,
+            edited_date: n.date,
+            edited_items: n.items.map((it) => ({ ...it })),
+            expanded: false,
           }))
         );
       } catch (e) {
@@ -172,15 +174,70 @@ export const MonthlyInvoicePage: React.FC = () => {
     }
   }, [loadedPageCount, totalPages, loadMorePages]);
 
-  // 納品書 inline 編集ハンドラ
-  const handleNoteFieldChange = (
+  // 明細編集ハンドラ
+  const toggleNoteExpanded = (noteId: number) => {
+    setEditableNotes((prev) =>
+      prev.map((n) => (n.id === noteId ? { ...n, expanded: !n.expanded } : n))
+    );
+  };
+
+  const handleNoteDateChange = (noteId: number, value: string) => {
+    setEditableNotes((prev) =>
+      prev.map((n) => (n.id === noteId ? { ...n, edited_date: value } : n))
+    );
+  };
+
+  const handleItemChange = (
     noteId: number,
-    field: 'edited_subtotal' | 'edited_tax' | 'edited_total',
+    itemIndex: number,
+    field: keyof DeliveryItemEdit,
     value: string
   ) => {
-    const numValue = parseInt(value, 10) || 0;
     setEditableNotes((prev) =>
-      prev.map((n) => (n.id === noteId ? { ...n, [field]: numValue } : n))
+      prev.map((n) => {
+        if (n.id !== noteId) return n;
+        const items = n.edited_items.map((it, i) => {
+          if (i !== itemIndex) return it;
+          if (field === 'product_name' || field === 'product_code') {
+            return { ...it, [field]: value };
+          }
+          const num = parseInt(value, 10) || 0;
+          const updated = { ...it, [field]: num };
+          // qty or unit_price 変更時、amount を qty × unit_price で自動更新
+          if (field === 'quantity' || field === 'unit_price') {
+            updated.amount = updated.quantity * updated.unit_price;
+          }
+          return updated;
+        });
+        return { ...n, edited_items: items };
+      })
+    );
+  };
+
+  const handleAddItem = (noteId: number) => {
+    setEditableNotes((prev) =>
+      prev.map((n) =>
+        n.id === noteId
+          ? {
+              ...n,
+              edited_items: [
+                ...n.edited_items,
+                { product_code: '', product_name: '', quantity: 0, unit_price: 0, amount: 0 },
+              ],
+              expanded: true,
+            }
+          : n
+      )
+    );
+  };
+
+  const handleRemoveItem = (noteId: number, itemIndex: number) => {
+    setEditableNotes((prev) =>
+      prev.map((n) =>
+        n.id === noteId
+          ? { ...n, edited_items: n.edited_items.filter((_, i) => i !== itemIndex) }
+          : n
+      )
     );
   };
 
@@ -190,12 +247,11 @@ export const MonthlyInvoicePage: React.FC = () => {
       prev.map((n) => (n.id === note.id ? { ...n, saving: true } : n))
     );
     try {
-      // 1. DB 更新
-      await updateDeliveryNote(
+      // 1. DB 更新 (明細置換、subtotal/tax/total は backend で自動計算)
+      const result = await updateDeliveryNoteWithItems(
         note.id,
-        note.edited_subtotal,
-        note.edited_tax,
-        note.edited_total
+        note.edited_date,
+        note.edited_items
       );
       // 2. 月次請求書を再生成 (新しい合計値を反映)
       const yearMonth = `${selectedYear}年${parseInt(selectedMonth)}月`;
@@ -237,9 +293,11 @@ export const MonthlyInvoicePage: React.FC = () => {
           n.id === note.id
             ? {
                 ...n,
-                subtotal: note.edited_subtotal,
-                tax: note.edited_tax,
-                total: note.edited_total,
+                date: note.edited_date,
+                subtotal: result.subtotal,
+                tax: result.tax,
+                total: result.total,
+                items: note.edited_items.map((it) => ({ ...it })),
                 saving: false,
               }
             : n
@@ -430,124 +488,273 @@ export const MonthlyInvoicePage: React.FC = () => {
             </div>
           </div>
 
-          {/* 納品書一覧 (inline 編集可能) */}
+          {/* 納品書一覧 (明細を inline 編集) */}
           <div>
             <h3 className="text-xl font-semibold text-gray-700 mb-3">
-              含まれる納品書（金額を編集できます）
+              含まれる納品書（明細を編集できます）
             </h3>
-            <p className="text-sm text-gray-600 mb-3">
-              ※ LLM の誤抽出があった場合、その場で修正してください。保存すると
-              月次請求書PDF + 売上集計シートが自動的に再生成されます。
-            </p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3 text-sm text-blue-900">
+              <p className="font-semibold mb-1">📝 明細が真値です</p>
+              <p>
+                LLM の誤抽出があった場合、明細（品名・数量・単価・金額）を修正してください。
+                小計・消費税・合計は明細から自動計算されます。
+                保存すると月次請求書PDF + 売上集計シートが自動的に再生成されます。
+              </p>
+            </div>
             {notesLoading ? (
               <div className="text-center py-6 text-gray-500">納品書一覧を読み込み中...</div>
             ) : editableNotes.length === 0 ? (
               <div className="text-center py-6 text-gray-500">納品書がありません</div>
             ) : (
-              <div className="overflow-x-auto bg-white border border-gray-200 rounded-lg">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-gray-600 font-medium">伝票番号</th>
-                      <th className="px-3 py-2 text-left text-gray-600 font-medium">日付</th>
-                      <th className="px-3 py-2 text-right text-gray-600 font-medium w-32">小計</th>
-                      <th className="px-3 py-2 text-right text-gray-600 font-medium w-32">消費税</th>
-                      <th className="px-3 py-2 text-right text-gray-600 font-medium w-32">合計</th>
-                      <th className="px-3 py-2 text-center text-gray-600 font-medium w-24">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {editableNotes.map((note) => {
-                      const dirty =
-                        note.edited_subtotal !== note.subtotal ||
-                        note.edited_tax !== note.tax ||
-                        note.edited_total !== note.total;
-                      const expectedTax = Math.floor(note.edited_subtotal * 0.1);
-                      const expectedTotal = note.edited_subtotal + note.edited_tax;
+              <div className="space-y-3">
+                {editableNotes.map((note) => {
+                  const editedSubtotal = note.edited_items.reduce((s, it) => s + it.amount, 0);
+                  const editedTax =
+                    editedSubtotal >= 0
+                      ? Math.floor(editedSubtotal * 0.1)
+                      : -Math.floor(Math.abs(editedSubtotal) * 0.1);
+                  const editedTotal = editedSubtotal + editedTax;
+                  // 編集済かどうか: 日付 or 明細件数違い or 各明細違い
+                  const dirty =
+                    note.edited_date !== note.date ||
+                    note.edited_items.length !== note.items.length ||
+                    note.edited_items.some((it, i) => {
+                      const orig = note.items[i];
                       return (
-                        <tr
-                          key={note.id}
-                          className={`border-t border-gray-100 ${dirty ? 'bg-yellow-50' : ''}`}
-                        >
-                          <td className="px-3 py-2 text-gray-800 font-mono">{note.slip_number}</td>
-                          <td className="px-3 py-2 text-gray-600">{note.date}</td>
-                          <td className="px-3 py-2">
+                        !orig ||
+                        it.product_code !== orig.product_code ||
+                        it.product_name !== orig.product_name ||
+                        it.quantity !== orig.quantity ||
+                        it.unit_price !== orig.unit_price ||
+                        it.amount !== orig.amount
+                      );
+                    });
+                  return (
+                    <div
+                      key={note.id}
+                      className={`border rounded-lg ${
+                        dirty ? 'border-yellow-400 bg-yellow-50' : 'border-gray-200 bg-white'
+                      }`}
+                    >
+                      {/* 折りたたみヘッダ */}
+                      <div
+                        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
+                        onClick={() => toggleNoteExpanded(note.id)}
+                      >
+                        <div className="flex items-center gap-4">
+                          <span className="text-sm font-medium w-6">
+                            {note.expanded ? '▼' : '▶'}
+                          </span>
+                          <span className="font-mono text-gray-800">{note.slip_number}</span>
+                          <span className="text-sm text-gray-500">{note.edited_date}</span>
+                          <span className="text-sm text-gray-500">
+                            ({note.edited_items.length}件)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-6 text-sm">
+                          <div>
+                            <span className="text-gray-500">小計:</span>{' '}
+                            <span className="font-mono font-medium">
+                              ¥{editedSubtotal.toLocaleString()}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">消費税:</span>{' '}
+                            <span className="font-mono">¥{editedTax.toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">合計:</span>{' '}
+                            <span className="font-mono font-bold">
+                              ¥{editedTotal.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 展開ボディ */}
+                      {note.expanded && (
+                        <div className="px-4 py-3 border-t border-gray-200">
+                          {/* 日付編集 */}
+                          <div className="mb-3 flex items-center gap-2">
+                            <label className="text-sm text-gray-600">日付:</label>
                             <input
-                              type="number"
-                              value={note.edited_subtotal}
-                              onChange={(e) =>
-                                handleNoteFieldChange(note.id, 'edited_subtotal', e.target.value)
-                              }
-                              className="w-full border border-gray-300 rounded px-2 py-1 text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              type="text"
+                              value={note.edited_date}
+                              onChange={(e) => handleNoteDateChange(note.id, e.target.value)}
+                              placeholder="YYYY/MM/DD"
+                              className="border border-gray-300 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
                             />
-                          </td>
-                          <td className="px-3 py-2">
-                            <input
-                              type="number"
-                              value={note.edited_tax}
-                              onChange={(e) =>
-                                handleNoteFieldChange(note.id, 'edited_tax', e.target.value)
-                              }
-                              className="w-full border border-gray-300 rounded px-2 py-1 text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            />
-                            {expectedTax !== note.edited_tax && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleNoteFieldChange(
-                                    note.id,
-                                    'edited_tax',
-                                    String(expectedTax)
-                                  )
-                                }
-                                className="text-xs text-blue-600 hover:text-blue-800 mt-1"
-                                title="小計×10% を適用"
-                              >
-                                → {expectedTax.toLocaleString()}
-                              </button>
-                            )}
-                          </td>
-                          <td className="px-3 py-2">
-                            <input
-                              type="number"
-                              value={note.edited_total}
-                              onChange={(e) =>
-                                handleNoteFieldChange(note.id, 'edited_total', e.target.value)
-                              }
-                              className="w-full border border-gray-300 rounded px-2 py-1 text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            />
-                            {expectedTotal !== note.edited_total && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleNoteFieldChange(
-                                    note.id,
-                                    'edited_total',
-                                    String(expectedTotal)
-                                  )
-                                }
-                                className="text-xs text-blue-600 hover:text-blue-800 mt-1"
-                                title="小計+消費税 を適用"
-                              >
-                                → {expectedTotal.toLocaleString()}
-                              </button>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-center">
+                          </div>
+
+                          {/* 明細テーブル */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                  <th className="px-2 py-1 text-left text-gray-600 font-medium">
+                                    商品コード
+                                  </th>
+                                  <th className="px-2 py-1 text-left text-gray-600 font-medium">
+                                    品名
+                                  </th>
+                                  <th className="px-2 py-1 text-right text-gray-600 font-medium w-20">
+                                    数量
+                                  </th>
+                                  <th className="px-2 py-1 text-right text-gray-600 font-medium w-28">
+                                    単価
+                                  </th>
+                                  <th className="px-2 py-1 text-right text-gray-600 font-medium w-28">
+                                    金額
+                                  </th>
+                                  <th className="px-2 py-1 text-center w-12"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {note.edited_items.map((item, idx) => {
+                                  const expectedAmount = item.quantity * item.unit_price;
+                                  const amountMismatch = expectedAmount !== item.amount;
+                                  return (
+                                    <tr key={idx} className="border-t border-gray-100">
+                                      <td className="px-2 py-1">
+                                        <input
+                                          type="text"
+                                          value={item.product_code}
+                                          onChange={(e) =>
+                                            handleItemChange(
+                                              note.id,
+                                              idx,
+                                              'product_code',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full border border-gray-300 rounded px-1 py-0.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                        />
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <input
+                                          type="text"
+                                          value={item.product_name}
+                                          onChange={(e) =>
+                                            handleItemChange(
+                                              note.id,
+                                              idx,
+                                              'product_name',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full border border-gray-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                        />
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <input
+                                          type="number"
+                                          value={item.quantity}
+                                          onChange={(e) =>
+                                            handleItemChange(
+                                              note.id,
+                                              idx,
+                                              'quantity',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full border border-gray-300 rounded px-1 py-0.5 text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                        />
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <input
+                                          type="number"
+                                          value={item.unit_price}
+                                          onChange={(e) =>
+                                            handleItemChange(
+                                              note.id,
+                                              idx,
+                                              'unit_price',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full border border-gray-300 rounded px-1 py-0.5 text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                        />
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <input
+                                          type="number"
+                                          value={item.amount}
+                                          onChange={(e) =>
+                                            handleItemChange(
+                                              note.id,
+                                              idx,
+                                              'amount',
+                                              e.target.value
+                                            )
+                                          }
+                                          className={`w-full border rounded px-1 py-0.5 text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                                            amountMismatch
+                                              ? 'border-orange-400 bg-orange-50'
+                                              : 'border-gray-300'
+                                          }`}
+                                        />
+                                        {amountMismatch && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleItemChange(
+                                                note.id,
+                                                idx,
+                                                'amount',
+                                                String(expectedAmount)
+                                              )
+                                            }
+                                            className="text-xs text-blue-600 hover:text-blue-800"
+                                            title="数量×単価 を適用"
+                                          >
+                                            → {expectedAmount.toLocaleString()}
+                                          </button>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (window.confirm('この明細行を削除しますか？')) {
+                                              handleRemoveItem(note.id, idx);
+                                            }
+                                          }}
+                                          className="text-red-500 hover:text-red-700 hover:bg-red-100 rounded px-1 text-xs"
+                                          title="削除"
+                                        >
+                                          ✕
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* 操作ボタン */}
+                          <div className="mt-3 flex items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() => handleAddItem(note.id)}
+                              className="text-sm px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                            >
+                              + 明細行を追加
+                            </button>
                             <Button
                               onClick={() => handleSaveNote(note)}
                               disabled={!dirty || note.saving}
                               variant="primary"
                               loading={note.saving}
                             >
-                              保存
+                              この納品書を保存
                             </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

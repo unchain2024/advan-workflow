@@ -279,6 +279,51 @@ export const getCompanyBillingInfo = async (companyName: string, yearMonth: stri
   return response.data;
 };
 
+// 月次請求書ページの明細編集 (Phase 5e'/編集)
+export interface DeliveryItemEdit {
+  product_code: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  amount: number;
+}
+
+export interface DeliveryNoteWithItems {
+  id: number;
+  slip_number: string;
+  date: string;
+  subtotal: number;
+  tax: number;
+  total: number;
+  items: DeliveryItemEdit[];
+}
+
+export const getDeliveryNotesWithItems = async (
+  companyName: string,
+  yearMonth: string
+): Promise<{ notes: DeliveryNoteWithItems[] }> => {
+  const response = await apiClient.get<{ notes: DeliveryNoteWithItems[] }>(
+    '/delivery-notes-with-items',
+    { params: { company_name: companyName, year_month: yearMonth } }
+  );
+  return response.data;
+};
+
+export const updateDeliveryNoteWithItems = async (
+  noteId: number,
+  date: string,
+  items: DeliveryItemEdit[]
+): Promise<{ success: boolean; subtotal: number; tax: number; total: number }> => {
+  const response = await apiClient.put<{
+    success: boolean;
+    subtotal: number;
+    tax: number;
+    total: number;
+  }>(`/delivery-notes/${noteId}/full`, { date, items });
+  return response.data;
+};
+
+
 // 乖離チェック関連API
 export const checkDiscrepancy = async (): Promise<CheckDiscrepancyResponse> => {
   const response = await apiClient.get<CheckDiscrepancyResponse>('/check-discrepancy');

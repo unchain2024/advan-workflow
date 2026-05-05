@@ -553,6 +553,165 @@ async def update_delivery_note(note_id: int, request: UpdateDeliveryNoteRequest)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- 納品書 + 明細の取得・編集（業務側でLLM誤抽出を修正するため） ---
+
+class DeliveryItemEdit(BaseModel):
+    product_code: str = ""
+    product_name: str
+    quantity: int
+    unit_price: int
+    amount: int
+
+
+class DeliveryNoteWithItems(BaseModel):
+    id: int
+    slip_number: str
+    date: str
+    subtotal: int
+    tax: int
+    total: int
+    items: list[DeliveryItemEdit]
+
+
+class DeliveryNotesWithItemsResponse(BaseModel):
+    notes: list[DeliveryNoteWithItems]
+
+
+class UpdateDeliveryNoteWithItemsRequest(BaseModel):
+    """明細を真値として note + items を一括更新。
+    subtotal/tax/total は明細から自動計算 (フロント計算値も検証用に受信可)。"""
+    date: str
+    items: list[DeliveryItemEdit]
+
+
+@router.get("/delivery-notes-with-items", response_model=DeliveryNotesWithItemsResponse)
+async def get_delivery_notes_with_items(
+    company_name: str = Query(...),
+    year_month: str = Query(...),
+):
+    """指定会社・年月の納品書一覧（明細付き、ID付き）を取得"""
+    try:
+        db = MonthlyItemsDB()
+        # canonical 名に正規化
+        sheets_client = GoogleSheetsClient()
+        target_year = _extract_year_from_year_month(year_month)
+        canonical = sheets_client.get_canonical_company_name(
+            company_name, year=target_year
+        )
+        if canonical:
+            company_name = canonical
+
+        # ID付き納品書取得
+        notes_with_id = db.get_delivery_notes_with_ids(company_name, year_month)
+        # 明細取得（slip_numberでひもづけ）
+        full_notes = db.get_monthly_items(company_name, year_month)
+        items_by_slip = {n.slip_number: n.items for n in full_notes}
+
+        result = []
+        for n in notes_with_id:
+            items = items_by_slip.get(n["slip_number"], [])
+            result.append(
+                DeliveryNoteWithItems(
+                    id=n["id"],
+                    slip_number=n["slip_number"],
+                    date=n["date"],
+                    subtotal=n["subtotal"],
+                    tax=n["tax"],
+                    total=n["total"],
+                    items=[
+                        DeliveryItemEdit(
+                            product_code=item.product_code,
+                            product_name=item.product_name,
+                            quantity=item.quantity,
+                            unit_price=item.unit_price,
+                            amount=item.amount,
+                        )
+                        for item in items
+                    ],
+                )
+            )
+        return DeliveryNotesWithItemsResponse(notes=result)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/delivery-notes/{note_id}/full")
+async def update_delivery_note_with_items(
+    note_id: int,
+    request: UpdateDeliveryNoteWithItemsRequest,
+):
+    """納品書の明細を更新し、subtotal/tax/total を明細から自動計算
+
+    明細を真値とするため、小計は items の amount 合計、消費税は subtotal × 10%、
+    合計は subtotal + tax で算出する。frontend で計算ずれが起きても backend で
+    正規化される。
+    """
+    try:
+        db = MonthlyItemsDB()
+
+        # 1. note_id から既存 note の情報取得 (company_name, year_month, slip_number)
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT dn.slip_number, dn.sales_person, mi.company_name, mi.year_month
+                FROM delivery_notes dn
+                JOIN monthly_invoices mi ON mi.id = dn.monthly_invoice_id
+                WHERE dn.id = ?
+            """, (note_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="納品書が見つかりません")
+            slip_number = row["slip_number"]
+            sales_person = row["sales_person"] or ""
+            company_name = row["company_name"]
+            year_month = row["year_month"]
+
+        # 2. 明細から subtotal/tax/total を計算
+        subtotal = sum(item.amount for item in request.items)
+        # 返品 (subtotal が負) でも +/-10% 同様に計算
+        tax = int(subtotal * 0.1) if subtotal >= 0 else -int(abs(subtotal) * 0.1)
+        total = subtotal + tax
+
+        # 3. update_monthly_item は slip_number で識別して note+items を完全置換
+        delivery_note = DeliveryNote(
+            date=request.date,
+            company_name=company_name,
+            slip_number=slip_number,
+            items=[
+                DeliveryItem(
+                    slip_number=slip_number,
+                    product_code=item.product_code,
+                    product_name=item.product_name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    amount=item.amount,
+                )
+                for item in request.items
+            ],
+            subtotal=subtotal,
+            tax=tax,
+            total=total,
+        )
+        db.update_monthly_item(
+            company_name=company_name,
+            year_month=year_month,
+            delivery_note=delivery_note,
+            sales_person=sales_person,
+        )
+        return {
+            "success": True,
+            "subtotal": subtotal,
+            "tax": tax,
+            "total": total,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- 売上入金管理 (消滅・繰越) エンドポイント ---
 
 
