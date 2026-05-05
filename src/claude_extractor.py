@@ -238,6 +238,26 @@ class ClaudeExtractor:
         elif subtotal != 0 and tax != 0 and total == 0:
             total = subtotal + tax
 
+        # パターン4: subtotal/tax/total が全部0 でも items の amount 合計があれば
+        # それを subtotal とみなして計算（バロック等の特殊フォーマット対策）
+        elif subtotal == 0 and tax == 0 and total == 0 and items:
+            items_sum = sum(item.amount for item in items if item.amount)
+            if items_sum != 0:
+                subtotal = items_sum
+                tax = int(subtotal * 0.1)
+                total = subtotal + tax
+                print(
+                    f"    [金額フォールバック Claude] subtotal/tax/total=0 → 明細合計 "
+                    f"{items_sum} を採用 → subtotal={subtotal}, tax={tax}, total={total}"
+                )
+
+        # 抽出結果のデバッグログ (合算ずれ調査用)
+        slip = data.get("slip_number", "")
+        print(
+            f"    [Claude抽出 結果] slip={slip}, items={len(items)}, "
+            f"subtotal={subtotal}, tax={tax}, total={total}"
+        )
+
         return DeliveryNote(
             date=data.get("date", "") or "",
             company_name=data.get("company_name", "") or "",
