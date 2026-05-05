@@ -51,6 +51,8 @@ interface Props {
     value: string | number | boolean,
   ) => void;
   onDeleteInvoice: (groupIndex: number, invoiceIndex: number) => void;
+  // Phase 5d': 明細1行ずつ削除
+  onDeleteItem: (groupIndex: number, invoiceIndex: number, itemIndex: number) => void;
 }
 
 export const SupplierGroupSection: React.FC<Props> = ({
@@ -66,6 +68,7 @@ export const SupplierGroupSection: React.FC<Props> = ({
   onEditSupplierNameForGroup,
   onUpdateInvoiceField,
   onDeleteInvoice,
+  onDeleteItem,
 }) => {
   const totalSubtotal = group.invoices.reduce((s, i) => s + i.subtotal, 0);
   const totalTax = group.invoices.reduce((s, i) => s + i.tax, 0);
@@ -316,11 +319,12 @@ export const SupplierGroupSection: React.FC<Props> = ({
                       <th className="text-right px-3 py-2 text-gray-600">数量</th>
                       <th className="text-right px-3 py-2 text-gray-600">単価</th>
                       <th className="text-right px-3 py-2 text-gray-600">金額</th>
+                      <th className="px-2 py-2 text-gray-600 w-10"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {invoice.items.map((item, itemIdx) => (
-                      <tr key={itemIdx} className="border-t border-gray-100">
+                      <tr key={itemIdx} className="border-t border-gray-100 hover:bg-red-50/30">
                         <td className="px-3 py-2 text-gray-800">{item.product_name}</td>
                         <td className="px-3 py-2 text-gray-600">{item.product_code}</td>
                         <td className="px-3 py-2 text-right text-gray-800">{item.quantity}</td>
@@ -329,6 +333,24 @@ export const SupplierGroupSection: React.FC<Props> = ({
                         </td>
                         <td className="px-3 py-2 text-right text-gray-800">
                           ¥{item.amount.toLocaleString()}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `この明細行を削除しますか？\n品名: ${item.product_name || '(空)'}\n金額: ¥${item.amount.toLocaleString()}\n\n※ 小計・消費税・合計は手動で再調整してください`
+                                )
+                              ) {
+                                onDeleteItem(groupIndex, idx, itemIdx);
+                              }
+                            }}
+                            className="text-red-500 hover:text-red-700 hover:bg-red-100 rounded px-1.5 py-0.5 text-xs font-medium"
+                            title="この明細行を削除"
+                          >
+                            ✕
+                          </button>
                         </td>
                       </tr>
                     ))}

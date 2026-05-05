@@ -245,6 +245,30 @@ export const PurchasePage: React.FC = () => {
     });
   };
 
+  // Phase 5d': 明細行 (item) 削除 — 誤OCR行を1行ずつ消す
+  // 小計/消費税/合計は自動再計算しない（ユーザの手動編集を尊重、必要なら下の input で調整）
+  const handleDeleteItem = (
+    groupIndex: number,
+    invoiceIndex: number,
+    itemIndex: number,
+  ) => {
+    setGroups((prev) =>
+      prev.map((g, gi) => {
+        if (gi !== groupIndex) return g;
+        return {
+          ...g,
+          invoices: g.invoices.map((inv, ii) => {
+            if (ii !== invoiceIndex) return inv;
+            return {
+              ...inv,
+              items: inv.items.filter((_, mi) => mi !== itemIndex),
+            };
+          }),
+        };
+      }),
+    );
+  };
+
   return (
     <div>
       <h1 className="text-4xl font-bold text-gray-800 mb-8">仕入れ計上</h1>
@@ -420,6 +444,7 @@ export const PurchasePage: React.FC = () => {
               onEditSupplierNameForGroup={handleEditSupplierNameForGroup}
               onUpdateInvoiceField={handleUpdateInvoiceField}
               onDeleteInvoice={handleDeleteInvoice}
+              onDeleteItem={handleDeleteItem}
             />
           ))}
         </>
