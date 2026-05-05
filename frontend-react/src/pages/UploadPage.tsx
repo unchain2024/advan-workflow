@@ -230,7 +230,7 @@ export const UploadPage: React.FC = () => {
     setError(
       `[グループ ${groupIndex + 1}] 会社名 '${info.extracted_name}' が canonical マスターと一致しませんでした。`
     );
-    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Phase 5d': scroll-to-top はやらない (UIが下にあると不便)
   };
 
   const handleRegenerate = async (

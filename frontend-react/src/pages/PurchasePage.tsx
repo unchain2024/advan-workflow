@@ -18,9 +18,20 @@ function groupBySupplier(results: ProcessPurchasePDFResponse[]): PurchaseGroup[]
     for (const inv of r.purchase_invoices) {
       const key = inv.supplier_name || '（仕入先名なし）';
       const existing = map.get(key);
+      // canonical 化失敗 → picker を即時表示
+      const hasMismatch = inv.company_matched === false;
+      const candidates = inv.candidate_canonicals || [];
+
       if (existing) {
         existing.invoices.push(inv);
         existing.pdfUrls.push(r.purchase_pdf_url);
+        // グループ内のいずれかが mismatch ならグループ全体を mismatch とする
+        if (hasMismatch && !existing.supplierMismatch) {
+          existing.supplierMismatch = true;
+          existing.extractedSupplierName = inv.supplier_name;
+          existing.supplierCandidates = candidates;
+          existing.showAllSupplierCandidates = true;
+        }
       } else {
         map.set(key, {
           id: `${key}__${inv.slip_number || crypto.randomUUID()}`,
@@ -31,10 +42,10 @@ function groupBySupplier(results: ProcessPurchasePDFResponse[]): PurchaseGroup[]
           isSaving: false,
           showDuplicateDialog: false,
           duplicateNotes: [],
-          supplierMismatch: false,
-          extractedSupplierName: '',
-          supplierCandidates: [],
-          showAllSupplierCandidates: false,
+          supplierMismatch: hasMismatch,
+          extractedSupplierName: hasMismatch ? inv.supplier_name : '',
+          supplierCandidates: hasMismatch ? candidates : [],
+          showAllSupplierCandidates: hasMismatch,
           supplierFilter: '',
           editingSupplierIndex: null,
           requestId: crypto.randomUUID(),
@@ -175,7 +186,7 @@ export const PurchasePage: React.FC = () => {
           supplierFilter: '',
           error: null,
         });
-        if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+        // Phase 5d': scroll-to-top はやらない (UIが下にあると不便)
       } else {
         const errorMessage =
           (typeof detail === 'string' ? detail : detail?.message) ||

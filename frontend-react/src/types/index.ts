@@ -176,6 +176,9 @@ export interface PurchaseInvoice {
   total: number;
   is_taxable: boolean;
   detected_indicators?: string[];
+  // canonical 化結果。false なら UI に picker を出す
+  company_matched?: boolean;
+  candidate_canonicals?: string[];
 }
 
 export interface ProcessPurchasePDFResponse {

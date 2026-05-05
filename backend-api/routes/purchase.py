@@ -41,6 +41,9 @@ class PurchaseInvoiceResponse(BaseModel):
     total: int
     is_taxable: bool
     detected_indicators: list[str] = []
+    # canonical 化結果。False なら UI 側で picker 表示
+    company_matched: bool = True
+    candidate_canonicals: list[str] = []
 
 
 class ProcessPurchasePDFResponse(BaseModel):
@@ -155,7 +158,11 @@ def _extract_year_from_year_month(year_month: str) -> int:
     return datetime.now().year
 
 
-def _convert_purchase_invoice(invoice: PurchaseInvoice) -> PurchaseInvoiceResponse:
+def _convert_purchase_invoice(
+    invoice: PurchaseInvoice,
+    company_matched: bool = True,
+    candidate_canonicals: Optional[list[str]] = None,
+) -> PurchaseInvoiceResponse:
     """PurchaseInvoiceをレスポンス形式に変換"""
     return PurchaseInvoiceResponse(
         date=invoice.date,
@@ -176,6 +183,8 @@ def _convert_purchase_invoice(invoice: PurchaseInvoice) -> PurchaseInvoiceRespon
         total=invoice.total,
         is_taxable=invoice.is_taxable,
         detected_indicators=invoice.detected_indicators,
+        company_matched=company_matched,
+        candidate_canonicals=candidate_canonicals or [],
     )
 
 
@@ -203,20 +212,28 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
 
         # Phase 5a/5b: canonical 解決 + 課税/非課税 hint を適用
         # ファイル名ヒントで親/子を判別、PURCHASE_TAXABILITY 登録会社は LLM 抽出値を上書き
+        # canonical 化結果を invoice ごとに記録して response に含める (Phase 5d': UI即時picker表示)
         sheets_client = GoogleSheetsClient()
+        canonical_match_results: list[tuple[bool, list[str]]] = []  # (matched, candidates)
         for inv in invoices:
             raw_supplier = inv.supplier_name
             if not raw_supplier:
+                # supplier_name 自体が空 → mismatch 扱い、全候補返す
+                canonical_match_results.append((False, list_canonicals('purchase')))
                 continue
             canonical = sheets_client.get_canonical_purchase_company_name(
                 raw_supplier, filename=file.filename
             )
             if not canonical:
+                # canonical 化失敗 → UI に picker を出してもらうために候補を返す
+                print(f"  [仕入canonical不一致] '{raw_supplier}' → 候補返却")
+                canonical_match_results.append((False, list_canonicals('purchase')))
                 continue
 
             if canonical != raw_supplier:
                 print(f"  [仕入正規化] '{raw_supplier}' → '{canonical}'")
             inv.supplier_name = canonical
+            canonical_match_results.append((True, []))
 
             # Layer 2: シート分類が確定している会社は無条件で上書き
             hint = get_purchase_taxability_hint(canonical)
@@ -269,7 +286,14 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
         purchase_pdf_url = f"/output/{purchase_filename}?t={timestamp}"
 
         return ProcessPurchasePDFResponse(
-            purchase_invoices=[_convert_purchase_invoice(inv) for inv in invoices],
+            purchase_invoices=[
+                _convert_purchase_invoice(
+                    inv,
+                    company_matched=matched,
+                    candidate_canonicals=candidates,
+                )
+                for inv, (matched, candidates) in zip(invoices, canonical_match_results)
+            ],
             records_count=len(invoices),
             purchase_pdf_url=purchase_pdf_url,
         )
