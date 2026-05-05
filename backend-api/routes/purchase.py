@@ -12,7 +12,10 @@ from pydantic import BaseModel
 from src.purchase_extractor import PurchaseExtractor, PurchaseInvoice, PurchaseItem
 from src.sheets_client import GoogleSheetsClient, parse_amount, _find_company_row
 from src.database import MonthlyItemsDB
-from src.canonical_companies import list_canonicals
+from src.canonical_companies import (
+    list_canonicals,
+    get_purchase_taxability_hint,
+)
 
 router = APIRouter()
 
@@ -194,6 +197,29 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
 
         if not invoices:
             raise HTTPException(status_code=500, detail="PDFの抽出に失敗しました")
+
+        # Phase 5a/5b: canonical 解決 + 課税/非課税 hint を適用
+        # ファイル名ヒントで親/子を判別、PURCHASE_TAXABILITY 登録会社は LLM 抽出値を上書き
+        sheets_client = GoogleSheetsClient()
+        for inv in invoices:
+            raw_supplier = inv.supplier_name
+            if not raw_supplier:
+                continue
+            canonical = sheets_client.get_canonical_purchase_company_name(
+                raw_supplier, filename=file.filename
+            )
+            if canonical:
+                if canonical != raw_supplier:
+                    print(f"  [仕入正規化] '{raw_supplier}' → '{canonical}'")
+                inv.supplier_name = canonical
+                # 課税/非課税ヒント適用 (シート分類が確定している会社のみ上書き)
+                hint = get_purchase_taxability_hint(canonical)
+                if hint is not None and hint != inv.is_taxable:
+                    print(
+                        f"  [課税区分上書き] '{canonical}': "
+                        f"LLM抽出 is_taxable={inv.is_taxable} → シート定義 {hint}"
+                    )
+                    inv.is_taxable = hint
 
         # 2. 納品書PDFをoutputディレクトリに保存
         output_dir = Path(__file__).parent.parent.parent / "output"
