@@ -466,6 +466,21 @@ async def regenerate_group_invoice(request: RegenerateGroupInvoiceRequest):
     およびグループ merge 後の正しいPDF生成のため。
     """
     try:
+        # 受信内容のデバッグログ (合算ずれ調査用)
+        print(
+            f"[regenerate-group-invoice] 受信: company={request.company_name}, "
+            f"year_month={request.year_month}, notes={len(request.delivery_notes)}件"
+        )
+        _sub_sum = 0
+        _tax_sum = 0
+        for i, n in enumerate(request.delivery_notes):
+            print(
+                f"  [{i}] slip={n.slip_number}, date={n.date}, "
+                f"items={len(n.items)}, subtotal={n.subtotal}, tax={n.tax}, total={n.total}"
+            )
+            _sub_sum += n.subtotal
+            _tax_sum += n.tax
+        print(f"  [合算] subtotal_sum={_sub_sum}, tax_sum={_tax_sum}")
         # 会社名は frontend で canonical 化済前提（picker 選択後に呼ばれる）
         # 念のため canonical lookup を試みる（失敗時は raw 名のまま継続）
         company_name = request.company_name

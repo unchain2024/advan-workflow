@@ -403,6 +403,13 @@ class LLMExtractor:
                     f"→ subtotal={subtotal}, tax={tax}, total={total}"
                 )
 
+        # 抽出結果のデバッグログ (合算ずれ調査用)
+        slip = data.get("slip_number", "")
+        print(
+            f"    [LLM抽出 結果] slip={slip}, items={len(items)}, "
+            f"subtotal={subtotal}, tax={tax}, total={total}"
+        )
+
         return DeliveryNote(
             date=data.get("date", ""),
             company_name=data.get("company_name", ""),
