@@ -3,8 +3,22 @@ import { Button } from '../components/Common/Button';
 import { Message } from '../components/Common/Message';
 import { Spinner } from '../components/Common/Spinner';
 import { MetricCard } from '../components/Common/MetricCard';
-import { generateMonthlyInvoice, getDBCompanies, getDBSalesPersons } from '../api/client';
-import type { GenerateMonthlyInvoiceResponse } from '../types';
+import {
+  generateMonthlyInvoice,
+  getDBCompanies,
+  getDBSalesPersons,
+  getDeliveryNotes,
+  updateDeliveryNote,
+  syncSheetsFromDB,
+} from '../api/client';
+import type { GenerateMonthlyInvoiceResponse, DBDeliveryNote } from '../types';
+
+interface EditableNote extends DBDeliveryNote {
+  edited_subtotal: number;
+  edited_tax: number;
+  edited_total: number;
+  saving?: boolean;
+}
 
 const PAGES_PER_BATCH = 5;
 
@@ -25,6 +39,10 @@ export const MonthlyInvoicePage: React.FC = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
   const pdfFilenameRef = useRef<string | null>(null);
+
+  // 納品書 inline 編集 (LLM 誤抽出を業務側で修正するため)
+  const [editableNotes, setEditableNotes] = useState<EditableNote[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
 
   // ページ読み込み時にDB内の会社名リストを取得
   useEffect(() => {
@@ -67,6 +85,24 @@ export const MonthlyInvoicePage: React.FC = () => {
 
       const response = await generateMonthlyInvoice(companyName, yearMonth, salesPerson);
       setResult(response);
+
+      // 納品書 inline 編集用の一覧を取得
+      try {
+        setNotesLoading(true);
+        const notesRes = await getDeliveryNotes(companyName, yearMonth);
+        setEditableNotes(
+          notesRes.notes.map((n) => ({
+            ...n,
+            edited_subtotal: n.subtotal,
+            edited_tax: n.tax,
+            edited_total: n.total,
+          }))
+        );
+      } catch (e) {
+        console.error('納品書一覧取得エラー:', e);
+      } finally {
+        setNotesLoading(false);
+      }
 
       // PDFを画像に変換（最初のバッチ）
       setImagesLoading(true);
@@ -135,6 +171,88 @@ export const MonthlyInvoicePage: React.FC = () => {
       await loadMorePages();
     }
   }, [loadedPageCount, totalPages, loadMorePages]);
+
+  // 納品書 inline 編集ハンドラ
+  const handleNoteFieldChange = (
+    noteId: number,
+    field: 'edited_subtotal' | 'edited_tax' | 'edited_total',
+    value: string
+  ) => {
+    const numValue = parseInt(value, 10) || 0;
+    setEditableNotes((prev) =>
+      prev.map((n) => (n.id === noteId ? { ...n, [field]: numValue } : n))
+    );
+  };
+
+  // 単一納品書の保存 + 月次請求書再生成 + シート再同期
+  const handleSaveNote = async (note: EditableNote) => {
+    setEditableNotes((prev) =>
+      prev.map((n) => (n.id === note.id ? { ...n, saving: true } : n))
+    );
+    try {
+      // 1. DB 更新
+      await updateDeliveryNote(
+        note.id,
+        note.edited_subtotal,
+        note.edited_tax,
+        note.edited_total
+      );
+      // 2. 月次請求書を再生成 (新しい合計値を反映)
+      const yearMonth = `${selectedYear}年${parseInt(selectedMonth)}月`;
+      const newRes = await generateMonthlyInvoice(companyName, yearMonth, salesPerson);
+      setResult(newRes);
+      // PDF 画像も再ロード
+      try {
+        setImagesLoading(true);
+        setInvoiceImages([]);
+        setTotalPages(0);
+        setLoadedPageCount(0);
+        setCurrentPage(0);
+        const pdfUrl = newRes.invoice_url.split('?')[0];
+        const filename = pdfUrl.split('/').pop();
+        if (filename) {
+          pdfFilenameRef.current = filename;
+          const imgRes = await fetch(
+            `/api/pdf-to-images/${encodeURIComponent(filename)}?start_page=1&end_page=${PAGES_PER_BATCH}`
+          );
+          if (imgRes.ok) {
+            const imgData = await imgRes.json();
+            setInvoiceImages(imgData.images);
+            setTotalPages(imgData.num_pages);
+            setLoadedPageCount(imgData.images.length);
+          }
+        }
+      } finally {
+        setImagesLoading(false);
+      }
+      // 3. シート再同期 (DB 真値でシート上書き)
+      try {
+        await syncSheetsFromDB();
+      } catch (e) {
+        console.error('シート再同期エラー:', e);
+      }
+      // 4. 編集状態をリセット (新しい値を origin に)
+      setEditableNotes((prev) =>
+        prev.map((n) =>
+          n.id === note.id
+            ? {
+                ...n,
+                subtotal: note.edited_subtotal,
+                tax: note.edited_tax,
+                total: note.edited_total,
+                saving: false,
+              }
+            : n
+        )
+      );
+    } catch (e: any) {
+      console.error('納品書保存エラー:', e);
+      alert(`保存に失敗しました: ${e?.message || e}`);
+      setEditableNotes((prev) =>
+        prev.map((n) => (n.id === note.id ? { ...n, saving: false } : n))
+      );
+    }
+  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('ja-JP', {
@@ -312,16 +430,126 @@ export const MonthlyInvoicePage: React.FC = () => {
             </div>
           </div>
 
-          {/* 含まれる伝票番号リスト */}
+          {/* 納品書一覧 (inline 編集可能) */}
           <div>
             <h3 className="text-xl font-semibold text-gray-700 mb-3">
-              含まれる伝票番号
+              含まれる納品書（金額を編集できます）
             </h3>
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <p className="text-gray-700">
-                {result.delivery_notes.join(', ')}
-              </p>
-            </div>
+            <p className="text-sm text-gray-600 mb-3">
+              ※ LLM の誤抽出があった場合、その場で修正してください。保存すると
+              月次請求書PDF + 売上集計シートが自動的に再生成されます。
+            </p>
+            {notesLoading ? (
+              <div className="text-center py-6 text-gray-500">納品書一覧を読み込み中...</div>
+            ) : editableNotes.length === 0 ? (
+              <div className="text-center py-6 text-gray-500">納品書がありません</div>
+            ) : (
+              <div className="overflow-x-auto bg-white border border-gray-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-gray-600 font-medium">伝票番号</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-medium">日付</th>
+                      <th className="px-3 py-2 text-right text-gray-600 font-medium w-32">小計</th>
+                      <th className="px-3 py-2 text-right text-gray-600 font-medium w-32">消費税</th>
+                      <th className="px-3 py-2 text-right text-gray-600 font-medium w-32">合計</th>
+                      <th className="px-3 py-2 text-center text-gray-600 font-medium w-24">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {editableNotes.map((note) => {
+                      const dirty =
+                        note.edited_subtotal !== note.subtotal ||
+                        note.edited_tax !== note.tax ||
+                        note.edited_total !== note.total;
+                      const expectedTax = Math.floor(note.edited_subtotal * 0.1);
+                      const expectedTotal = note.edited_subtotal + note.edited_tax;
+                      return (
+                        <tr
+                          key={note.id}
+                          className={`border-t border-gray-100 ${dirty ? 'bg-yellow-50' : ''}`}
+                        >
+                          <td className="px-3 py-2 text-gray-800 font-mono">{note.slip_number}</td>
+                          <td className="px-3 py-2 text-gray-600">{note.date}</td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              value={note.edited_subtotal}
+                              onChange={(e) =>
+                                handleNoteFieldChange(note.id, 'edited_subtotal', e.target.value)
+                              }
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              value={note.edited_tax}
+                              onChange={(e) =>
+                                handleNoteFieldChange(note.id, 'edited_tax', e.target.value)
+                              }
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                            {expectedTax !== note.edited_tax && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleNoteFieldChange(
+                                    note.id,
+                                    'edited_tax',
+                                    String(expectedTax)
+                                  )
+                                }
+                                className="text-xs text-blue-600 hover:text-blue-800 mt-1"
+                                title="小計×10% を適用"
+                              >
+                                → {expectedTax.toLocaleString()}
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              value={note.edited_total}
+                              onChange={(e) =>
+                                handleNoteFieldChange(note.id, 'edited_total', e.target.value)
+                              }
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                            {expectedTotal !== note.edited_total && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleNoteFieldChange(
+                                    note.id,
+                                    'edited_total',
+                                    String(expectedTotal)
+                                  )
+                                }
+                                className="text-xs text-blue-600 hover:text-blue-800 mt-1"
+                                title="小計+消費税 を適用"
+                              >
+                                → {expectedTotal.toLocaleString()}
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <Button
+                              onClick={() => handleSaveNote(note)}
+                              disabled={!dirty || note.saving}
+                              variant="primary"
+                              loading={note.saving}
+                            >
+                              保存
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* PDF画像プレビュー */}
