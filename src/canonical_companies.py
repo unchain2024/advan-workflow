@@ -305,6 +305,104 @@ def get_purchase_taxability_hint(canonical_name: str) -> Optional[bool]:
     return PURCHASE_TAXABILITY.get(canonical_name)
 
 
+# ===== Phase 5b' (Layer 3): 課税/非課税が混在する会社の動的判別ルール =====
+# サンプル PDF (n=13, 7 社) の分析から導出。各社の「非課税の手がかり文言」を列挙。
+# Layer 2 (PURCHASE_TAXABILITY) で固定できない混在会社のみ登録。
+#
+# 判定ロジック:
+# 1. detected_indicators に nontaxable_indicators のいずれかが含まれる → 非課税
+# 2. tax_zero_means_nontaxable=True かつ tax==0 かつ total >= min_total_for_zero_tax → 非課税
+# 3. 上記いずれにも該当せず default_taxable=True → 課税
+# 4. ルール無しの会社 → LLM 抽出値を尊重（フォールバック）
+class _PurchaseTaxRule(dict):
+    """型ヒント用のラッパー（読みやすさ目的）"""
+    pass
+
+
+PURCHASE_TAXABILITY_RULES: Final[dict[str, dict]] = {
+    '（株）ヴェスト': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['免税', '海外'],
+        'tax_zero_means_nontaxable': True,
+        'min_total_for_zero_tax': 100,
+    },
+    '（株）マテックス': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['海外', '海外分'],
+        'tax_zero_means_nontaxable': True,
+        'min_total_for_zero_tax': 100,
+    },
+    '㈱有延商店': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['送り', '海外', 'ベトナム', '中国', '輸出'],
+        'tax_zero_means_nontaxable': True,
+        'min_total_for_zero_tax': 100,
+    },
+    '日本マート㈱': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['不課税', '輸出免税', '海外'],
+        'tax_zero_means_nontaxable': True,
+        'min_total_for_zero_tax': 100,
+    },
+    '㈱フクイ': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['非課税取引', '免税', '海外'],
+        'tax_zero_means_nontaxable': True,
+        'min_total_for_zero_tax': 10,  # フクイ注釈通り「合計10円未満は税0」
+    },
+    'リーウェイジャパン㈱': {
+        'default_taxable': True,
+        'nontaxable_indicators': ['免税', '海外'],
+        'tax_zero_means_nontaxable': True,
+        'min_total_for_zero_tax': 100,
+    },
+}
+
+
+def resolve_purchase_taxability(
+    canonical_name: str,
+    detected_indicators: list[str],
+    tax: int,
+    total: int,
+    llm_is_taxable: bool,
+) -> tuple[bool, str]:
+    """canonical 名 + 検出キーワード + 金額から最終的な課税/非課税を判定
+
+    優先順位:
+      1. PURCHASE_TAXABILITY (Layer 2: シート固定) — 既に caller で適用済み前提
+      2. PURCHASE_TAXABILITY_RULES (Layer 3: 会社別動的)
+         a. detected_indicators が nontaxable_indicators とヒット → 非課税
+         b. tax==0 かつ total >= min_total_for_zero_tax → 非課税
+         c. それ以外 → default_taxable
+      3. ルール無し → LLM 抽出値（フォールバック）
+
+    Returns:
+        (final_is_taxable, reason): 最終判定 + 判定理由（ログ/UI 表示用）
+    """
+    rule = PURCHASE_TAXABILITY_RULES.get(canonical_name)
+    if not rule:
+        return llm_is_taxable, "LLM抽出値（ルール未登録）"
+
+    # 1. 非課税キーワードチェック
+    indicators_lower = [s.lower() for s in detected_indicators]
+    for kw in rule.get('nontaxable_indicators', []):
+        kw_lower = kw.lower()
+        for det in indicators_lower:
+            if kw_lower in det or det in kw_lower:
+                return False, f"非課税キーワード '{kw}' を検出"
+
+    # 2. 消費税ゼロシグナル
+    if rule.get('tax_zero_means_nontaxable', False):
+        min_total = rule.get('min_total_for_zero_tax', 100)
+        if tax == 0 and total >= min_total:
+            return False, f"消費税=0 かつ 合計≥{min_total}円"
+
+    # 3. デフォルト
+    if rule.get('default_taxable', True):
+        return True, "ルール一致無し → デフォルト課税"
+    return False, "ルール一致無し → デフォルト非課税"
+
+
 def list_canonicals(domain: str = "sales") -> list[str]:
     """canonical 会社名リストを取得
 

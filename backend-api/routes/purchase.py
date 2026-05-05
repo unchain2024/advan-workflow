@@ -15,6 +15,7 @@ from src.database import MonthlyItemsDB
 from src.canonical_companies import (
     list_canonicals,
     get_purchase_taxability_hint,
+    resolve_purchase_taxability,
 )
 
 router = APIRouter()
@@ -39,6 +40,7 @@ class PurchaseInvoiceResponse(BaseModel):
     tax: int
     total: int
     is_taxable: bool
+    detected_indicators: list[str] = []
 
 
 class ProcessPurchasePDFResponse(BaseModel):
@@ -173,6 +175,7 @@ def _convert_purchase_invoice(invoice: PurchaseInvoice) -> PurchaseInvoiceRespon
         tax=invoice.tax,
         total=invoice.total,
         is_taxable=invoice.is_taxable,
+        detected_indicators=invoice.detected_indicators,
     )
 
 
@@ -208,18 +211,48 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
             canonical = sheets_client.get_canonical_purchase_company_name(
                 raw_supplier, filename=file.filename
             )
-            if canonical:
-                if canonical != raw_supplier:
-                    print(f"  [仕入正規化] '{raw_supplier}' → '{canonical}'")
-                inv.supplier_name = canonical
-                # 課税/非課税ヒント適用 (シート分類が確定している会社のみ上書き)
-                hint = get_purchase_taxability_hint(canonical)
-                if hint is not None and hint != inv.is_taxable:
+            if not canonical:
+                continue
+
+            if canonical != raw_supplier:
+                print(f"  [仕入正規化] '{raw_supplier}' → '{canonical}'")
+            inv.supplier_name = canonical
+
+            # Layer 2: シート分類が確定している会社は無条件で上書き
+            hint = get_purchase_taxability_hint(canonical)
+            if hint is not None:
+                if hint != inv.is_taxable:
                     print(
-                        f"  [課税区分上書き] '{canonical}': "
+                        f"  [課税区分上書き L2/シート固定] '{canonical}': "
                         f"LLM抽出 is_taxable={inv.is_taxable} → シート定義 {hint}"
                     )
                     inv.is_taxable = hint
+
+            # Layer 3: 混在会社は detected_indicators + 税0 シグナルで動的判定
+            if canonical in {
+                '（株）ヴェスト', '（株）マテックス', '㈱有延商店',
+                '日本マート㈱', '㈱フクイ', 'リーウェイジャパン㈱',
+            }:
+                final_taxable, reason = resolve_purchase_taxability(
+                    canonical_name=canonical,
+                    detected_indicators=inv.detected_indicators,
+                    tax=inv.tax,
+                    total=inv.total,
+                    llm_is_taxable=inv.is_taxable,
+                )
+                if final_taxable != inv.is_taxable:
+                    print(
+                        f"  [課税区分上書き L3/動的ルール] '{canonical}': "
+                        f"LLM抽出 is_taxable={inv.is_taxable} → ルール判定 {final_taxable} "
+                        f"(理由: {reason}, indicators={inv.detected_indicators})"
+                    )
+                    inv.is_taxable = final_taxable
+                else:
+                    print(
+                        f"  [課税区分確認 L3] '{canonical}': "
+                        f"LLM抽出と一致 is_taxable={final_taxable} ({reason}, "
+                        f"indicators={inv.detected_indicators})"
+                    )
 
         # 2. 納品書PDFをoutputディレクトリに保存
         output_dir = Path(__file__).parent.parent.parent / "output"

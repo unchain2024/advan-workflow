@@ -175,6 +175,7 @@ export interface PurchaseInvoice {
   tax: number;
   total: number;
   is_taxable: boolean;
+  detected_indicators?: string[];
 }
 
 export interface ProcessPurchasePDFResponse {

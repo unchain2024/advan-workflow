@@ -225,6 +225,15 @@ export const SupplierGroupSection: React.FC<Props> = ({
                 )}
               </div>
               <div className="flex items-center gap-2">
+                {/* Phase 5b': 検出されたキーワード表示（透明性のため） */}
+                {invoice.detected_indicators && invoice.detected_indicators.length > 0 && (
+                  <span
+                    className="px-2 py-0.5 rounded text-xs font-mono text-gray-600 bg-yellow-50 border border-yellow-200"
+                    title="PDFから検出されたキーワード（課税/非課税判定の根拠）"
+                  >
+                    🔍 {invoice.detected_indicators.join(', ')}
+                  </span>
+                )}
                 {/* Phase 5d: 課税/非課税を toggle ボタンに */}
                 <button
                   type="button"

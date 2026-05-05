@@ -26,6 +26,9 @@ class PurchaseInvoice:
     tax: int = 0  # 消費税（非課税なら0）
     total: int = 0  # 合計金額（税込）
     is_taxable: bool = True  # 課税かどうか
+    # Phase 5b' (Layer 3): PDF文中で検出された課税/非課税の手がかりキーワード
+    # 例: ["免税"], ["海外", "ベトナム"], ["不課税"], []
+    detected_indicators: list[str] = field(default_factory=list)
 
     def calculate_totals(self):
         """明細から合計を再計算"""
@@ -70,7 +73,23 @@ PURCHASE_EXTRACTION_PROMPT = """
    - 消費税額が0円、または「非課税」「免税」と記載されている場合 → false
    - 不明な場合はtrue（デフォルト）
 
-9. **is_return（返品フラグ）**: 返品伝票かどうか（真偽値）
+9. **detected_indicators（検出した手がかりキーワード）**: PDF内で「課税/非課税の判別に使える文言」を**そのまま抽出**
+   - 宛先・摘要・備考・商品名・注釈に出てくる以下の語を**全て**配列で返す（出現したものだけ）:
+     - 「免税」「非課税」「不課税」「輸出免税」
+     - 「海外」「海外分」「中国」「ベトナム」「香港」「韓国」（国名は出現したものだけ）
+     - 「送り」「直送」「輸出」「越境」
+     - 「課税」（明示的に「課税」と書かれている場合のみ）
+     - 「税抜」「10%」「税率10.0」「消費税(10%)」
+   - 上記キーワードが PDF にどれだけ出ても1回のみ列挙（重複排除）
+   - キーワードが何もなければ空配列 `[]`
+   - 例（リーウェイ非課税）: `["10%"]`
+   - 例（マテックス非課税）: `["海外"]`
+   - 例（ヴェスト非課税）: `["免税"]`
+   - 例（有延商店非課税）: `["送り", "ベトナム"]`
+   - 例（日本マート非課税）: `["不課税", "輸出免税"]`
+   - 例（フクイ課税）: `["10%", "税率10.0"]`
+
+10. **is_return（返品フラグ）**: 返品伝票かどうか（真偽値）
    - 「返品」「返却」「RETURN」などのキーワードが含まれる場合は true
    - **重要**: 返品の場合、金額は正の数で記載されていても、後で自動的にマイナスに変換されます
 
@@ -94,6 +113,7 @@ PURCHASE_EXTRACTION_PROMPT = """
     "tax": 1000,
     "total": 11000,
     "is_taxable": true,
+    "detected_indicators": ["10%"],
     "is_return": false
   }
 ]
@@ -180,6 +200,16 @@ class PurchaseExtractor(LLMExtractor):
                 if total > 0:
                     total = -total
 
+            # detected_indicators: LLM が抽出した手がかりキーワード（重複排除 + str化）
+            raw_indicators = entry.get("detected_indicators", []) or []
+            seen: set[str] = set()
+            indicators: list[str] = []
+            for x in raw_indicators:
+                s = str(x).strip()
+                if s and s not in seen:
+                    seen.add(s)
+                    indicators.append(s)
+
             invoice = PurchaseInvoice(
                 date=entry.get("date", ""),
                 supplier_name=entry.get("supplier_name", ""),
@@ -189,6 +219,7 @@ class PurchaseExtractor(LLMExtractor):
                 tax=tax,
                 total=total,
                 is_taxable=entry.get("is_taxable", True),
+                detected_indicators=indicators,
             )
 
             invoice.calculate_totals()
