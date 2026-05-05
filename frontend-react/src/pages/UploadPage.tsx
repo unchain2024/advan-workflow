@@ -105,17 +105,29 @@ export const UploadPage: React.FC = () => {
     accept: { 'application/pdf': ['.pdf'] },
     multiple: true,
     onDrop: (acceptedFiles) => {
-      setFiles(acceptedFiles);
+      // 追記モード: 既存ファイルに追加 (重複は name+size でスキップ)
+      setFiles((prev) => {
+        const existingKeys = new Set(prev.map((f) => `${f.name}::${f.size}`));
+        const additions = acceptedFiles.filter(
+          (f) => !existingKeys.has(`${f.name}::${f.size}`)
+        );
+        return [...prev, ...additions];
+      });
       setError(null);
+      // 既に処理済の groups は維持しない (再 process が必要)
       setGroups([]);
     },
   });
 
   const removeFile = (index: number) => {
-    setFiles(files.filter((_, i) => i !== index));
-    if (files.length === 1) {
-      setGroups([]);
-    }
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+    setGroups([]);
+  };
+
+  const clearAllFiles = () => {
+    setFiles([]);
+    setGroups([]);
+    setError(null);
   };
 
   const handleProcess = async () => {
@@ -358,18 +370,30 @@ export const UploadPage: React.FC = () => {
         <input {...getInputProps()} />
         <div className="text-6xl mb-4">📎</div>
         <p className="text-lg font-semibold text-gray-700 mb-2">納品書PDFを選択（複数可）</p>
-        <p className="text-sm text-gray-500">ドラッグ&ドロップまたはクリックしてファイルを選択</p>
+        <p className="text-sm text-gray-500">
+          ドラッグ&ドロップまたはクリックしてファイルを選択（複数回投入で追加されます）
+        </p>
         <p className="text-xs text-gray-400 mt-2">許可形式: PDF (.pdf)</p>
       </div>
 
       {/* Selected Files */}
       {files.length > 0 && (
         <div className="mt-6">
-          <p className="font-semibold text-gray-700 mb-3">選択されたファイル: {files.length}件</p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-semibold text-gray-700">選択されたファイル: {files.length}件</p>
+            <button
+              type="button"
+              onClick={clearAllFiles}
+              disabled={isProcessing}
+              className="text-sm text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
+            >
+              すべてクリア
+            </button>
+          </div>
           <div className="space-y-2">
             {files.map((file, index) => (
               <div
-                key={index}
+                key={`${file.name}::${file.size}::${index}`}
                 className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between hover:shadow-md transition-shadow"
               >
                 <div className="flex items-center space-x-3">
