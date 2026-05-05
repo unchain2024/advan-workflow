@@ -319,7 +319,11 @@ async def save_purchase(request: SavePurchaseRequest):
     try:
         print(f"[save-purchase] 受信: {len(request.purchase_notes)}件の納品書, 会社={request.company_name}, 年月={request.year_month}")
         for i, note in enumerate(request.purchase_notes):
-            print(f"  [{i}] slip={note.slip_number}, subtotal={note.subtotal}, tax={note.tax}, total={note.total}")
+            print(
+                f"  [{i}] slip={note.slip_number}, subtotal={note.subtotal}, "
+                f"tax={note.tax}, total={note.total}, "
+                f"is_taxable={note.is_taxable}, detected_indicators={note.detected_indicators}"
+            )
 
         db = MonthlyItemsDB()
 
