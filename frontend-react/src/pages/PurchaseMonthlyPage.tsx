@@ -6,6 +6,7 @@ import {
   getPurchaseDBCompanies,
   getPurchaseDBSalesPersons,
   getPurchaseMonthly,
+  deletePurchaseDeliveryNote,
 } from '../api/client';
 import type { PurchaseMonthlyItem } from '../types';
 
@@ -20,6 +21,7 @@ export const PurchaseMonthlyPage: React.FC = () => {
   const [items, setItems] = useState<PurchaseMonthlyItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,6 +79,24 @@ export const PurchaseMonthlyPage: React.FC = () => {
       setError(err instanceof Error ? err.message : '取得に失敗しました');
     } finally {
       setLoadingItems(false);
+    }
+  };
+
+  const handleDelete = async (item: PurchaseMonthlyItem) => {
+    const ok = window.confirm(
+      `伝票番号 ${item.slip_number}（¥${item.total.toLocaleString()}）を削除します。よろしいですか？`
+    );
+    if (!ok) return;
+
+    setDeletingId(item.id);
+    setError(null);
+    try {
+      await deletePurchaseDeliveryNote(item.id);
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '削除に失敗しました');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -229,6 +249,9 @@ export const PurchaseMonthlyPage: React.FC = () => {
                 <th className="text-right px-4 py-3 border-b-2 border-gray-200 text-sm font-medium text-gray-600">
                   合計
                 </th>
+                <th className="text-center px-4 py-3 border-b-2 border-gray-200 text-sm font-medium text-gray-600">
+                  操作
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -263,6 +286,15 @@ export const PurchaseMonthlyPage: React.FC = () => {
                   <td className="px-4 py-3 border-b border-gray-100 text-right font-semibold text-gray-800">
                     ¥{item.total.toLocaleString()}
                   </td>
+                  <td className="px-4 py-3 border-b border-gray-100 text-center">
+                    <button
+                      onClick={() => handleDelete(item)}
+                      disabled={deletingId !== null}
+                      className="px-3 py-1 rounded text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deletingId === item.id ? '削除中...' : '削除'}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {/* 合計行 */}
@@ -279,6 +311,7 @@ export const PurchaseMonthlyPage: React.FC = () => {
                 <td className="px-4 py-3 text-right text-blue-900 text-lg">
                   ¥{totalAmount.toLocaleString()}
                 </td>
+                <td className="px-4 py-3"></td>
               </tr>
             </tbody>
           </table>

@@ -239,6 +239,15 @@ export const updatePurchaseDeliveryNote = async (
   return response.data;
 };
 
+export const deletePurchaseDeliveryNote = async (
+  id: number
+): Promise<{ success: boolean }> => {
+  const response = await apiClient.delete<{ success: boolean }>(
+    `/purchase-delivery-notes/${id}`
+  );
+  return response.data;
+};
+
 export const generateMonthlyInvoice = async (
   companyName: string,
   yearMonth: string,

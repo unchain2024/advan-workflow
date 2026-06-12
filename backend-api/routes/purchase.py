@@ -710,3 +710,18 @@ async def update_purchase_delivery_note(note_id: int, request: UpdatePurchaseNot
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/purchase-delivery-notes/{note_id}")
+async def delete_purchase_delivery_note(note_id: int):
+    """仕入れ納品書（伝票）を削除（ダブり解消用）"""
+    try:
+        db = MonthlyItemsDB()
+        deleted = db.delete_purchase_note(note_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="対象の伝票が見つかりません")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

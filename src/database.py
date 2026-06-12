@@ -1387,6 +1387,19 @@ class MonthlyItemsDB:
                 WHERE id = ?
             """, (subtotal, tax, total, current_time, note_id))
 
+    def delete_purchase_note(self, note_id: int) -> bool:
+        """指定IDの purchase_note を削除（伝票ダブり解消用）
+
+        purchase_items は ON DELETE CASCADE で自動削除される。
+        削除した行があれば True、対象が無ければ False を返す。
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM purchase_notes WHERE id = ?", (note_id,)
+            )
+            return cursor.rowcount > 0
+
     # --- 売上入金管理（消滅・繰越） ---
 
     def upsert_payment(
