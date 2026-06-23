@@ -72,6 +72,7 @@ SALES_CANONICALS: Final[tuple[str, ...]] = (
     '（株）キュー',
     '（株）トリコ',
     '（株）ドン・キホーテ',
+    '（株）ネペンテス',
     '（株）バロックジャパンリミテッド',
     '（株）バロックジャパンリミテッド/YS/サンプル',
     '（株）バロックジャパンリミテッド/サンプル',
@@ -297,11 +298,21 @@ PURCHASE_TAXABILITY: Final[dict[str, bool]] = {
 def get_purchase_taxability_hint(canonical_name: str) -> Optional[bool]:
     """canonical 名から課税/非課税のデフォルトを取得
 
+    P1: company_master (DB) を真値とし、DB 未登録/失敗時のみハードコード辞書に
+    フォールバックする。
+
     Returns:
         True: 課税が確定している会社
         False: 非課税が確定している会社
         None: 曖昧（混在しうる、付属系等）→ LLM 抽出値を尊重 + ユーザ手動編集に委ねる
     """
+    try:
+        from .database import MonthlyItemsDB
+        company = MonthlyItemsDB().get_company("purchase", canonical_name)
+        if company is not None:
+            return company["taxable"]  # bool または None（曖昧）
+    except Exception as e:
+        print(f"    [company_master] taxability DB読込失敗、ハードコードにフォールバック: {e}")
     return PURCHASE_TAXABILITY.get(canonical_name)
 
 
@@ -405,14 +416,29 @@ def resolve_purchase_taxability(
     return False, "ルール一致無し → デフォルト非課税"
 
 
-def list_canonicals(domain: str = "sales") -> list[str]:
-    """canonical 会社名リストを取得
-
-    Args:
-        domain: 'sales' | 'purchase'
-    """
+def _hardcoded_canonicals(domain: str = "sales") -> list[str]:
+    """ハードコード canonical リスト（DB フォールバック用・シード元）"""
     if domain == "sales":
         return list(SALES_CANONICALS)
     if domain == "purchase":
         return list(PURCHASE_CANONICALS)
     raise ValueError(f"未知のドメイン: {domain}. 'sales' or 'purchase' を指定してください")
+
+
+def list_canonicals(domain: str = "sales") -> list[str]:
+    """canonical 会社名リストを取得
+
+    P1: company_master (DB) を真値とする。DB が空/読込失敗のときのみ
+    ハードコードリストにフォールバックする。
+
+    Args:
+        domain: 'sales' | 'purchase'
+    """
+    fallback = _hardcoded_canonicals(domain)
+    try:
+        from .database import MonthlyItemsDB
+        names = MonthlyItemsDB().list_company_canonicals(domain)
+        return names if names else fallback
+    except Exception as e:
+        print(f"    [company_master] canonical DB読込失敗、ハードコードにフォールバック: {e}")
+        return fallback
