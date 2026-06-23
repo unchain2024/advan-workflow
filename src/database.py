@@ -247,6 +247,33 @@ class MonthlyItemsDB:
                 ON purchase_payments(company_name, year_month)
             """)
 
+            # --- 得意先/仕入先マスタ（P1: canonical 会社名の真値を DB へ移行） ---
+            # domain: 'sales' | 'purchase'
+            # canonical_name: マッチングの真値（請求書・ピッカーの候補元）
+            # taxable: 仕入のみ True/False、NULL=曖昧(LLM委ね)。売上は常に NULL
+            # is_active: 0 で論理削除（過去伝票の会社名は壊さない）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS company_master (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT NOT NULL,
+                    canonical_name TEXT NOT NULL,
+                    postal_code TEXT NOT NULL DEFAULT '',
+                    address TEXT NOT NULL DEFAULT '',
+                    department TEXT NOT NULL DEFAULT '',
+                    taxable INTEGER,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(domain, canonical_name)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_company_master_domain_active
+                ON company_master(domain, is_active)
+            """)
+            # ハードコード canonical からの初期シード（ドメイン別に空のときだけ）
+            self._seed_company_master(cursor)
+
             # 旧テーブルからマイグレーション
             cursor.execute("""
                 SELECT name FROM sqlite_master
@@ -950,6 +977,200 @@ class MonthlyItemsDB:
                 ORDER BY year_month
             """)
             return [row["year_month"] for row in cursor.fetchall()]
+
+    # ===== 得意先/仕入先マスタ (company_master) =====
+
+    def _seed_company_master(self, cursor):
+        """ハードコード canonical からドメイン別に初期シード（空のときだけ・冪等）
+
+        オフラインで安全に動くよう、名前と課税区分のみ投入する。
+        住所・郵便番号・事業部は scripts/backfill_company_addresses.py で別途投入する。
+        """
+        # 注意: ここでは DB-aware な get_purchase_taxability_hint ではなく
+        # 生の PURCHASE_TAXABILITY 辞書を使う（シード中の DB 再入を避けるため）
+        from .canonical_companies import (
+            SALES_CANONICALS,
+            PURCHASE_CANONICALS,
+            PURCHASE_TAXABILITY,
+        )
+
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+        def _seed_domain(domain: str, names, taxable_map):
+            cursor.execute(
+                "SELECT COUNT(*) AS n FROM company_master WHERE domain = ?",
+                (domain,),
+            )
+            if cursor.fetchone()["n"] > 0:
+                return  # 既にシード済み → 何もしない
+            rows = []
+            for name in names:
+                taxable = taxable_map.get(name) if taxable_map else None
+                taxable_val = None if taxable is None else (1 if taxable else 0)
+                rows.append((domain, name, taxable_val, current_time, current_time))
+            cursor.executemany(
+                """
+                INSERT INTO company_master
+                    (domain, canonical_name, taxable, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            print(f"    company_master シード: domain={domain} {len(rows)}件")
+
+        _seed_domain("sales", SALES_CANONICALS, None)
+        _seed_domain("purchase", PURCHASE_CANONICALS, PURCHASE_TAXABILITY)
+
+    def list_company_canonicals(self, domain: str) -> list[str]:
+        """有効な canonical 会社名を挿入順（id順）で返す（マッチング候補用）"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT canonical_name FROM company_master
+                WHERE domain = ? AND is_active = 1
+                ORDER BY id
+                """,
+                (domain,),
+            )
+            return [row["canonical_name"] for row in cursor.fetchall()]
+
+    def list_companies(self, domain: str, include_inactive: bool = False) -> list[dict]:
+        """マスタ全件を返す（管理画面用）"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            sql = "SELECT * FROM company_master WHERE domain = ?"
+            params: list = [domain]
+            if not include_inactive:
+                sql += " AND is_active = 1"
+            sql += " ORDER BY id"
+            cursor.execute(sql, params)
+            return [self._company_row_to_dict(row) for row in cursor.fetchall()]
+
+    def get_company(self, domain: str, canonical_name: str) -> Optional[dict]:
+        """domain + canonical_name で1件取得（is_active 問わず）"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM company_master WHERE domain = ? AND canonical_name = ?",
+                (domain, canonical_name),
+            )
+            row = cursor.fetchone()
+            return self._company_row_to_dict(row) if row else None
+
+    def get_company_by_id(self, company_id: int) -> Optional[dict]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM company_master WHERE id = ?", (company_id,))
+            row = cursor.fetchone()
+            return self._company_row_to_dict(row) if row else None
+
+    def add_company(
+        self,
+        domain: str,
+        canonical_name: str,
+        postal_code: str = "",
+        address: str = "",
+        department: str = "",
+        taxable: Optional[bool] = None,
+    ) -> dict:
+        """得意先/仕入先を追加。表記ゆれ重複(normalize 一致)は ValueError"""
+        canonical_name = (canonical_name or "").strip()
+        if not canonical_name:
+            raise ValueError("会社名が空です")
+
+        # 正規化ベースの重複チェック（既存の有効/無効すべてと比較）
+        target_norm = normalize_company_name(canonical_name)
+        for existing in self.list_companies(domain, include_inactive=True):
+            if existing["canonical_name"] == canonical_name:
+                raise ValueError(f"既に登録済みです: {canonical_name}")
+            if target_norm and normalize_company_name(existing["canonical_name"]) == target_norm:
+                raise ValueError(
+                    f"表記ゆれの可能性があります（既存: {existing['canonical_name']}）"
+                )
+
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        taxable_val = None if taxable is None else (1 if taxable else 0)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO company_master
+                    (domain, canonical_name, postal_code, address, department,
+                     taxable, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (domain, canonical_name, postal_code, address, department,
+                 taxable_val, current_time, current_time),
+            )
+            new_id = cursor.lastrowid
+        return self.get_company_by_id(new_id)
+
+    def update_company(
+        self,
+        company_id: int,
+        postal_code: Optional[str] = None,
+        address: Optional[str] = None,
+        department: Optional[str] = None,
+        taxable: Optional[bool] = None,
+        set_taxable: bool = False,
+        is_active: Optional[bool] = None,
+    ) -> Optional[dict]:
+        """マスタ更新。None 指定の項目は既存値を保持。
+        taxable は NULL も有効値のため、変更したいときだけ set_taxable=True にする。
+        """
+        existing = self.get_company_by_id(company_id)
+        if not existing:
+            return None
+        new_postal = existing["postal_code"] if postal_code is None else postal_code
+        new_address = existing["address"] if address is None else address
+        new_dept = existing["department"] if department is None else department
+        if set_taxable:
+            new_taxable = None if taxable is None else (1 if taxable else 0)
+        else:
+            new_taxable = None if existing["taxable"] is None else (1 if existing["taxable"] else 0)
+        new_active = existing["is_active"] if is_active is None else (1 if is_active else 0)
+
+        current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE company_master
+                SET postal_code = ?, address = ?, department = ?,
+                    taxable = ?, is_active = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (new_postal, new_address, new_dept, new_taxable, new_active,
+                 current_time, company_id),
+            )
+        return self.get_company_by_id(company_id)
+
+    def deactivate_company(self, company_id: int) -> Optional[dict]:
+        """論理削除（is_active=0）。過去伝票の会社名は壊さない"""
+        return self.update_company(company_id, is_active=False)
+
+    def get_company_taxability(self, canonical_name: str) -> Optional[bool]:
+        """仕入 canonical の課税デフォルトを DB から取得（未登録は None）"""
+        company = self.get_company("purchase", canonical_name)
+        if not company or company["taxable"] is None:
+            return None
+        return bool(company["taxable"])
+
+    @staticmethod
+    def _company_row_to_dict(row) -> dict:
+        return {
+            "id": row["id"],
+            "domain": row["domain"],
+            "canonical_name": row["canonical_name"],
+            "postal_code": row["postal_code"],
+            "address": row["address"],
+            "department": row["department"],
+            "taxable": None if row["taxable"] is None else bool(row["taxable"]),
+            "is_active": bool(row["is_active"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
 
     def update_delivery_note_amounts(
         self, delivery_note_id: int, subtotal: int, tax: int, total: int

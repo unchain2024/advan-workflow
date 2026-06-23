@@ -43,6 +43,39 @@ export interface CompanyConfig {
   bank_info: string;
 }
 
+export type CompanyDomain = 'sales' | 'purchase';
+
+export interface CompanyMasterItem {
+  id: number;
+  domain: CompanyDomain;
+  canonical_name: string;
+  postal_code: string;
+  address: string;
+  department: string;
+  taxable: boolean | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateCompanyRequest {
+  domain: CompanyDomain;
+  canonical_name: string;
+  postal_code?: string;
+  address?: string;
+  department?: string;
+  taxable?: boolean | null;
+}
+
+export interface UpdateCompanyRequest {
+  postal_code?: string;
+  address?: string;
+  department?: string;
+  taxable?: boolean | null;
+  set_taxable?: boolean;
+  is_active?: boolean;
+}
+
 export interface ProcessPDFResponse {
   delivery_note: DeliveryNote;
   company_info: CompanyInfo | null;

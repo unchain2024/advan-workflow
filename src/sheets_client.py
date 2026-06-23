@@ -21,7 +21,7 @@ try:
 except ImportError:
     HAS_STREAMLIT = False
 
-from .canonical_companies import PURCHASE_CANONICALS, SALES_CANONICALS
+from .canonical_companies import PURCHASE_CANONICALS, SALES_CANONICALS, list_canonicals
 from .config import (
     BILLING_SHEET_NAME,
     BILLING_SPREADSHEET_ID,
@@ -520,46 +520,39 @@ class GoogleSheetsClient:
             マッチした canonical 会社名、見つからない/曖昧な場合は None（ピッカー強制）
         """
         canonical = match_company_name_with_filename(
-            company_name, list(SALES_CANONICALS), filename=filename
+            company_name, list_canonicals("sales"), filename=filename
         )
         if canonical:
             print(f"    正規会社名取得: '{company_name}' → '{canonical}' (filename={filename!r})")
         return canonical
 
     def get_company_info(self, company_name: str) -> Optional[CompanyInfo]:
-        """会社マスターから会社情報を取得
+        """会社情報（郵便番号・住所・事業部）を取得
 
-        マスターシートの想定フォーマット:
-        | 会社名 | 事業部 | 郵便番号 | 住所 | ビル名 |
+        P1: company_master (DB) を唯一の真値とする。Google Sheets「マスター」には
+        依存しない。住所等は scripts/backfill_company_addresses.py で投入する。
 
         会社名のマッチング:
         - 法人格（株式会社、(株)など）と敬称（御中、様）を除去して比較
         - 例: "（株）SIM 御中" と "株式会社SIM（シム）" がマッチ
         """
-        sheet = self.client.open_by_key(COMPANY_MASTER_SPREADSHEET_ID).worksheet(
-            COMPANY_MASTER_SHEET_NAME
-        )
-        records = sheet.get_all_records()
+        from .database import MonthlyItemsDB
+        db = MonthlyItemsDB()
+        companies = db.list_companies("sales", include_inactive=True)
 
-        # match_company_name で最適な候補を選択
-        master_names = [str(r.get("会社名", "")) for r in records]
+        master_names = [c["canonical_name"] for c in companies]
         matched = match_company_name(company_name, master_names)
+        if not matched:
+            return None
 
-        if matched:
-            # マッチしたレコードを取得
-            for record in records:
-                if str(record.get("会社名", "")) == matched:
-                    master_name = matched
-                    address = str(record.get("住所", ""))
-                    building_name = str(record.get("ビル名", ""))
-                    full_address = f"{address} {building_name}".strip()
-
-                    return CompanyInfo(
-                        company_name=master_name,
-                        postal_code=str(record.get("郵便番号", "")),
-                        address=full_address,
-                        department=str(record.get("事業部", "")),
-                    )
+        for c in companies:
+            if c["canonical_name"] == matched:
+                return CompanyInfo(
+                    company_name=c["canonical_name"],
+                    postal_code=c["postal_code"],
+                    address=c["address"],
+                    department=c["department"],
+                )
         return None
 
     def save_delivery_note(self, delivery_note: DeliveryNote, company_info: Optional[CompanyInfo]):
@@ -1059,7 +1052,7 @@ class GoogleSheetsClient:
         Phase 3 で filename ヒント引数を追加（親/子 disambiguation 用）。
         """
         canonical = match_company_name_with_filename(
-            company_name, list(PURCHASE_CANONICALS), filename=filename
+            company_name, list_canonicals("purchase"), filename=filename
         )
         if canonical:
             print(f"    仕入れ正規会社名取得: '{company_name}' → '{canonical}' (filename={filename!r})")

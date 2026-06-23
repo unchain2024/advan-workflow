@@ -25,6 +25,10 @@ import type {
   PreviousBilling,
   CompanyInfo,
   DeliveryNote,
+  CompanyDomain,
+  CompanyMasterItem,
+  CreateCompanyRequest,
+  UpdateCompanyRequest,
 } from '../types';
 
 // 本番環境ではVITE_API_URLを使用、開発環境では/api（Viteプロキシ経由）
@@ -137,6 +141,37 @@ export const saveCompanyConfig = async (
   data: CompanyConfig
 ): Promise<{ success: boolean; message: string }> => {
   const response = await apiClient.post<{ success: boolean; message: string }>('/company-config', data);
+  return response.data;
+};
+
+// 得意先/仕入先マスタ (company_master) API
+export const listCompanyMaster = async (
+  domain: CompanyDomain,
+  includeInactive = false
+): Promise<CompanyMasterItem[]> => {
+  const response = await apiClient.get<{ companies: CompanyMasterItem[] }>('/company-master', {
+    params: { domain, include_inactive: includeInactive },
+  });
+  return response.data.companies;
+};
+
+export const createCompanyMaster = async (
+  data: CreateCompanyRequest
+): Promise<CompanyMasterItem> => {
+  const response = await apiClient.post<CompanyMasterItem>('/company-master', data);
+  return response.data;
+};
+
+export const updateCompanyMaster = async (
+  id: number,
+  data: UpdateCompanyRequest
+): Promise<CompanyMasterItem> => {
+  const response = await apiClient.patch<CompanyMasterItem>(`/company-master/${id}`, data);
+  return response.data;
+};
+
+export const deactivateCompanyMaster = async (id: number): Promise<CompanyMasterItem> => {
+  const response = await apiClient.delete<CompanyMasterItem>(`/company-master/${id}`);
   return response.data;
 };
 

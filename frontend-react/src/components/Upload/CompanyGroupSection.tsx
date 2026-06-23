@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '../Common/Button';
 import { Message } from '../Common/Message';
 import { ProcessingResult } from './ProcessingResult';
 import { PDFPreviewImage } from '../Preview/PDFPreviewImage';
 import { EditForm } from '../Preview/EditForm';
 import { SpreadsheetSave } from '../Preview/SpreadsheetSave';
+import { createCompanyMaster } from '../../api/client';
 import type {
   DeliveryNote,
   CompanyInfo,
@@ -78,6 +79,32 @@ export const CompanyGroupSection: React.FC<Props> = ({
   onSetEditingNoteIndex,
   onSetShowEditForm,
 }) => {
+  // 新規得意先登録（ピッカーに該当が無いとき）
+  const [registerName, setRegisterName] = useState('');
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [showRegister, setShowRegister] = useState(false);
+
+  const handleRegister = async () => {
+    const name = (registerName || group.extractedCompanyName).trim();
+    if (!name) {
+      setRegisterError('会社名を入力してください');
+      return;
+    }
+    setRegistering(true);
+    setRegisterError(null);
+    try {
+      await createCompanyMaster({ domain: 'sales', canonical_name: name });
+      // 登録した会社名でそのまま確定（マッチするようになる）
+      onSelectCompany(groupIndex, name);
+    } catch (err) {
+      const anyErr = err as { response?: { data?: { detail?: string } }; message?: string };
+      setRegisterError(anyErr?.response?.data?.detail || anyErr?.message || '登録に失敗しました');
+    } finally {
+      setRegistering(false);
+    }
+  };
+
   // グループ内累積（複数納品書の合計）
   const cumulativeSubtotal = group.deliveryNotes.reduce((s, n) => s + n.subtotal, 0);
   const cumulativeTax = group.deliveryNotes.reduce((s, n) => s + n.tax, 0);
@@ -162,6 +189,53 @@ export const CompanyGroupSection: React.FC<Props> = ({
                         {name}
                       </button>
                     ))}
+                </div>
+              )}
+            </div>
+
+            {/* どれにも該当しない → 新規得意先として登録 */}
+            <div className="mt-4 pt-3 border-t border-gray-300">
+              {!showRegister ? (
+                <button
+                  onClick={() => {
+                    setRegisterName(group.extractedCompanyName);
+                    setShowRegister(true);
+                  }}
+                  disabled={group.isMerging}
+                  className="text-sm text-green-700 hover:text-green-900 font-medium cursor-pointer disabled:opacity-50"
+                >
+                  ＋ 該当なし → この会社を新規登録
+                </button>
+              ) : (
+                <div>
+                  <p className="text-sm font-medium text-gray-600 mb-1">
+                    新規得意先として登録（住所などは後で「設定」で補完できます）：
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={registerName}
+                      onChange={(e) => setRegisterName(e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-400 focus:border-transparent"
+                      placeholder="登録する会社名"
+                    />
+                    <Button
+                      onClick={handleRegister}
+                      variant="success"
+                      loading={registering}
+                    >
+                      登録して確定
+                    </Button>
+                    <button
+                      onClick={() => setShowRegister(false)}
+                      className="text-sm text-gray-500 hover:underline"
+                    >
+                      取消
+                    </button>
+                  </div>
+                  {registerError && (
+                    <p className="text-sm text-red-600 mt-1">{registerError}</p>
+                  )}
                 </div>
               )}
             </div>

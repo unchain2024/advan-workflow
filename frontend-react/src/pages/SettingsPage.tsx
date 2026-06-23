@@ -5,8 +5,12 @@ import { Message } from '../components/Common/Message';
 import { Spinner } from '../components/Common/Spinner';
 import { getCompanyConfig, saveCompanyConfig } from '../api/client';
 import type { CompanyConfig } from '../types';
+import { CompanyMasterPanel } from '../components/CompanyMaster/CompanyMasterPanel';
+
+type SettingsTab = 'config' | 'companies';
 
 export const SettingsPage: React.FC = () => {
+  const [tab, setTab] = useState<SettingsTab>('config');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,42 +59,66 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        <Spinner message="設定を読み込み中..." />
-      </div>
-    );
-  }
-
   return (
     <div>
-      <h1 className="text-4xl font-bold text-gray-800 mb-4">⚙️ 自社情報設定</h1>
+      <h1 className="text-4xl font-bold text-gray-800 mb-6">⚙️ 設定</h1>
 
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-8">
-        <p className="text-gray-700 leading-relaxed">
-          請求書PDFに記載される自社情報を設定できます。
-          <br />
-          設定は <code className="bg-gray-200 px-1 rounded">company_config.json</code>{' '}
-          に保存され、即座に反映されます。
-        </p>
+      {/* タブバー */}
+      <div className="flex gap-1 border-b border-gray-200 mb-6">
+        <button
+          onClick={() => setTab('config')}
+          className={`px-5 py-3 font-semibold text-sm border-b-2 transition-colors ${
+            tab === 'config'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          自社情報
+        </button>
+        <button
+          onClick={() => setTab('companies')}
+          className={`px-5 py-3 font-semibold text-sm border-b-2 transition-colors ${
+            tab === 'companies'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          得意先・仕入先マスタ
+        </button>
       </div>
 
-      {error && (
-        <Message type="error" className="mb-4">
-          {error}
-        </Message>
-      )}
+      {tab === 'companies' ? (
+        <CompanyMasterPanel />
+      ) : loading ? (
+        <div className="flex justify-center items-center py-20">
+          <Spinner message="設定を読み込み中..." />
+        </div>
+      ) : (
+        <>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-8">
+            <p className="text-gray-700 leading-relaxed">
+              請求書PDFに記載される自社情報を設定できます。
+              <br />
+              設定は <code className="bg-gray-200 px-1 rounded">company_config.json</code>{' '}
+              に保存され、即座に反映されます。
+            </p>
+          </div>
 
-      {success && (
-        <Message type="success" className="mb-4">
-          {success}
-          <br />
-          💡 変更は次回のPDF生成から反映されます
-        </Message>
-      )}
+          {error && (
+            <Message type="error" className="mb-4">
+              {error}
+            </Message>
+          )}
 
-      <form onSubmit={handleSubmit(onSubmit)}>
+          {success && (
+            <Message type="success" className="mb-4">
+              {success}
+              <br />
+              💡 変更は次回のPDF生成から反映されます
+            </Message>
+          )}
+
+          <form onSubmit={handleSubmit(onSubmit)}>
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-2xl font-semibold text-gray-700 mb-6">📝 自社情報</h2>
 
@@ -246,6 +274,8 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
       </form>
+        </>
+      )}
     </div>
   );
 };
