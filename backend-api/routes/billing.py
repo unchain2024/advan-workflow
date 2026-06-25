@@ -5,10 +5,10 @@ from typing import Optional
 
 import re
 
-from src.sheets_client import GoogleSheetsClient, PreviousBilling, _find_company_row, match_company_name, parse_amount
+from src import sheets_client
+from src.sheets_client import PreviousBilling, _find_company_row, match_company_name, parse_amount
 from src.pdf_extractor import DeliveryNote, DeliveryItem
 from src.database import MonthlyItemsDB
-from src.config import BILLING_SPREADSHEET_ID
 from src.canonical_companies import list_canonicals
 
 
@@ -106,7 +106,6 @@ async def save_billing(request: SaveBillingRequest):
             }
 
         # 会社名をスプレッドシートの正規名に統一
-        sheets_client = GoogleSheetsClient()
         company_name = request.company_name
         target_year = None
         if request.delivery_notes and request.delivery_notes[0].date:
@@ -421,7 +420,6 @@ async def get_delivery_notes_with_items(
     try:
         db = MonthlyItemsDB()
         # canonical 名に正規化
-        sheets_client = GoogleSheetsClient()
         target_year = _extract_year_from_year_month(year_month)
         canonical = sheets_client.get_canonical_company_name(
             company_name, year=target_year
@@ -607,7 +605,6 @@ async def upsert_payment(request: PaymentRequest):
         db = MonthlyItemsDB()
 
         # 会社名を正規化（シート基準に合わせる）
-        sheets_client = GoogleSheetsClient()
         target_year = _extract_year_from_year_month(request.year_month)
         canonical = sheets_client.get_canonical_company_name(
             request.company_name, year=target_year
