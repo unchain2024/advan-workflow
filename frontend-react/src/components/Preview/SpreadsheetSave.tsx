@@ -3,8 +3,7 @@ import axios from 'axios';
 import { Button } from '../Common/Button';
 import { Message } from '../Common/Message';
 import { MetricCard } from '../Common/MetricCard';
-import { saveBilling, checkDiscrepancy } from '../../api/client';
-import { useAppStore } from '../../store/useAppStore';
+import { saveBilling } from '../../api/client';
 import type {
   DeliveryNote,
   PreviousBilling,
@@ -39,7 +38,6 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
   salesPerson,
   onCompanyMismatch,
 }) => {
-  const setDiscrepancies = useAppStore((s) => s.setDiscrepancies);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(crypto.randomUUID());
@@ -86,14 +84,6 @@ export const SpreadsheetSave: React.FC<SpreadsheetSaveProps> = ({
 
       alert(response.message);
       onSaveComplete();
-
-      // 乖離チェックを再実行
-      try {
-        const discResult = await checkDiscrepancy();
-        setDiscrepancies(discResult.discrepancies);
-      } catch (discErr) {
-        console.error('乖離チェックエラー:', discErr);
-      }
     } catch (err) {
       // 400 + company_not_matched は会社ピッカーへ戻す（DB-as-truth Phase 1）
       if (axios.isAxiosError(err) && err.response?.status === 400) {

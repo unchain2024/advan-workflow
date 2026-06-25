@@ -19,6 +19,12 @@ from src.canonical_companies import (
     PURCHASE_TAXABILITY_RULES,
 )
 
+def _purchase_ym_sort_key(year_month: str) -> tuple[int, int]:
+    """'2026年3月' → (2026, 3) でソート用キー"""
+    m = re.match(r'(\d{4})年(\d{1,2})月', year_month)
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
 router = APIRouter()
 
 
@@ -444,54 +450,14 @@ async def save_purchase(request: SavePurchaseRequest):
             request_id=request.request_id,
         )
 
-        # 7. Layer 2: シート書込（DB成功後にbest-effort、失敗しても DB は保持）
-        # Phase 2: per-note 加算ではなく、DB集計値で「上書き」する（再保存で 2倍/3倍にならない）
-        # 仕入シートは課税/非課税で別行 → 該当する側のみ 1 回ずつ書込
-        sheet_errors: list[str] = []
-        agg = db.get_purchase_amounts(company_name, year_month_str)
-
-        if agg["taxable_subtotal"] > 0 or any(pi.is_taxable for pi in purchase_invoices):
-            try:
-                sheets_client.save_purchase_record(
-                    supplier_name=company_name,
-                    target_year_month=year_month_str,
-                    subtotal=agg["taxable_subtotal"],
-                    tax=agg["taxable_tax"],
-                    is_taxable=True,
-                )
-            except Exception as sheet_err:
-                sheet_errors.append(f"課税: {sheet_err}")
-                print(f"    [SHEET_WRITE] 仕入シート（課税）上書きエラー（DB保持）: {sheet_err}")
-
-        if agg["nontaxable_subtotal"] > 0 or any(not pi.is_taxable for pi in purchase_invoices):
-            try:
-                sheets_client.save_purchase_record(
-                    supplier_name=company_name,
-                    target_year_month=year_month_str,
-                    subtotal=agg["nontaxable_subtotal"],
-                    tax=agg["nontaxable_tax"],
-                    is_taxable=False,
-                )
-            except Exception as sheet_err:
-                sheet_errors.append(f"非課税: {sheet_err}")
-                print(f"    [SHEET_WRITE] 仕入シート（非課税）上書きエラー（DB保持）: {sheet_err}")
-
-        if sheet_errors:
-            message = (
-                f"DB保存成功（{saved_count}件）。"
-                f"\n⚠️ 仕入シート書込で {len(sheet_errors)} 件のエラー（DB は正常）: "
-                f"{'; '.join(sheet_errors)}"
-            )
-            warning = f"仕入シート書込エラー: {'; '.join(sheet_errors)}"
-        else:
-            message = f"DB保存成功（{saved_count}件）。仕入シートも更新しました ({company_name} {request.year_month})"
-            warning = ""
+        # DB が唯一の真値（シート書込は廃止）
+        message = f"DB保存成功（{saved_count}件）。{company_name} ({request.year_month}) を更新しました。"
 
         return SavePurchaseResponse(
             success=True,
             message=message,
             saved_count=saved_count,
-            warning=warning,
+            warning="",
         )
 
     except HTTPException:
@@ -525,24 +491,8 @@ async def update_purchase_payment(request: UpdatePurchasePaymentRequest):
         )
         new_value = upserted["new_value"]
 
-        # Layer 2: シート書込（best-effort、失敗しても DB は保持）
-        sheet_warning = ""
-        try:
-            sheets_client = GoogleSheetsClient()
-            sheets_client.update_purchase_payment(
-                company_name=request.company_name,
-                year_month=request.year_month,
-                payment_amount=request.payment_amount,
-                add_mode=request.add_mode,
-            )
-        except Exception as sheet_err:
-            sheet_warning = f"シート書込エラー（DB は正常）: {sheet_err}"
-            print(f"    [SHEET_WRITE] 仕入入金シート更新エラー（続行）: {sheet_err}")
-
         action = "加算" if request.add_mode else "更新"
         message = f"{action}完了: {request.company_name} の {request.year_month} 消滅"
-        if sheet_warning:
-            message += f"\n⚠️ {sheet_warning}"
 
         return UpdatePurchasePaymentResponse(
             success=True,
@@ -560,63 +510,32 @@ async def update_purchase_payment(request: UpdatePurchasePaymentRequest):
 
 
 
-@router.post("/sync-purchase-sheets-from-db", response_model=SyncPurchaseSheetsResponse)
-async def sync_purchase_sheets_from_db():
-    """DB の集計値で仕入シートを上書き同期（Phase 2: DB-as-truth 強制再同期）
+@router.get("/purchase-companies-and-months", response_model=PurchaseCompaniesAndMonthsResponse)
+async def get_purchase_companies_and_months():
+    """仕入先リストと年月リストを取得（DB由来）
 
-    purchase_invoices に存在する全 (仕入先, 年月) について、課税/非課税別の発生・消費税
-    を仕入シートの該当セルに上書きする。
+    会社 = 仕入先マスタ(有効) ∪ 取引実績。年月 = 仕入伝票 or 入金が存在する年月。
     """
     try:
         db = MonthlyItemsDB()
-        sheets_client = GoogleSheetsClient()
+
+        master = [c["canonical_name"] for c in db.list_companies("purchase")]
+        seen = set(master)
+        companies = list(master)
+        for c in db.get_purchase_companies():
+            if c not in seen:
+                seen.add(c)
+                companies.append(c)
+
         totals = db.get_all_purchase_monthly_totals()
-        synced = 0
-        failed: list[str] = []
-        for item in totals:
-            company = item["company_name"]
-            ym = item["year_month"]
-            if item["taxable_subtotal"] > 0:
-                try:
-                    sheets_client.save_purchase_record(
-                        supplier_name=company,
-                        target_year_month=ym,
-                        subtotal=item["taxable_subtotal"],
-                        tax=item["taxable_tax"],
-                        is_taxable=True,
-                    )
-                    synced += 1
-                except Exception as e:
-                    failed.append(f"{company} {ym} (課税): {e}")
-            if item["nontaxable_subtotal"] > 0:
-                try:
-                    sheets_client.save_purchase_record(
-                        supplier_name=company,
-                        target_year_month=ym,
-                        subtotal=item["nontaxable_subtotal"],
-                        tax=item["nontaxable_tax"],
-                        is_taxable=False,
-                    )
-                    synced += 1
-                except Exception as e:
-                    failed.append(f"{company} {ym} (非課税): {e}")
-        message = (
-            f"仕入 DB → シート同期完了: 成功 {synced} 件" +
-            (f"、失敗 {len(failed)} 件" if failed else "")
+        ym_set = {t["year_month"] for t in totals}
+        ym_set.update(p["year_month"] for p in db.list_purchase_payments())
+        year_months = sorted(ym_set, key=_purchase_ym_sort_key)
+
+        return PurchaseCompaniesAndMonthsResponse(
+            companies=companies,
+            year_months=year_months,
         )
-        return SyncPurchaseSheetsResponse(synced_count=synced, failed=failed, message=message)
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/purchase-companies-and-months", response_model=PurchaseCompaniesAndMonthsResponse)
-async def get_purchase_companies_and_months():
-    """仕入れスプレッドシートから会社リストと年月リストを取得"""
-    try:
-        sheets_client = GoogleSheetsClient()
-        result = sheets_client.get_purchase_companies_and_months()
-        return PurchaseCompaniesAndMonthsResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -671,11 +590,47 @@ async def get_purchase_monthly(
 
 @router.get("/purchase-table", response_model=PurchaseTableResponse)
 async def get_purchase_table():
-    """仕入れスプレッドシートの全データを取得"""
+    """仕入れ集計表を DB から再構築（仕入先×月: 課税/非課税の発生・消費税 + 消滅）"""
     try:
-        sheets_client = GoogleSheetsClient()
-        result = sheets_client.get_purchase_table()
-        return PurchaseTableResponse(**result)
+        db = MonthlyItemsDB()
+        totals = db.get_all_purchase_monthly_totals()
+        payments = db.list_purchase_payments()
+
+        ym_set = {t["year_month"] for t in totals} | {p["year_month"] for p in payments}
+        year_months = sorted(ym_set, key=_purchase_ym_sort_key)
+        company_set = {t["company_name"] for t in totals} | {p["company_name"] for p in payments}
+        companies = sorted(company_set)
+
+        if not year_months:
+            return PurchaseTableResponse(headers=[], data=[])
+
+        # 集計をキー引きできるよう辞書化
+        tmap = {(t["company_name"], t["year_month"]): t for t in totals}
+        pmap = {(p["company_name"], p["year_month"]): p for p in payments}
+
+        headers = ["仕入先"]
+        for ym in year_months:
+            headers += [f"{ym} 課税発生", f"{ym} 課税消費税",
+                        f"{ym} 非課税発生", f"{ym} 消滅"]
+
+        def _fmt(n: int) -> str:
+            return f"{n:,}" if n else ""
+
+        rows: list[list[str]] = []
+        for company in companies:
+            row = [company]
+            for ym in year_months:
+                t = tmap.get((company, ym), {})
+                p = pmap.get((company, ym), {})
+                row += [
+                    _fmt(t.get("taxable_subtotal", 0)),
+                    _fmt(t.get("taxable_tax", 0)),
+                    _fmt(t.get("nontaxable_subtotal", 0)),
+                    _fmt(p.get("payment_amount", 0)),
+                ]
+            rows.append(row)
+
+        return PurchaseTableResponse(headers=headers, data=rows)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

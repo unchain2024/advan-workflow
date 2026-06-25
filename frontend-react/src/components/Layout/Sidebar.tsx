@@ -19,7 +19,6 @@ const navGroups: NavGroup[] = [
       { path: '/monthly-invoice', label: '月次請求書' },
       { path: '/billing-ledger', label: '売上入金管理' },
       { path: '/payment', label: '入金額入力(旧)' },
-      { path: '/reconciliation', label: '乖離確認' },
     ],
   },
   {

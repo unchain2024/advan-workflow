@@ -9,7 +9,6 @@ import {
   getDBSalesPersons,
   getDeliveryNotesWithItems,
   updateDeliveryNoteWithItems,
-  syncSheetsFromDB,
   type DeliveryNoteWithItems,
   type DeliveryItemEdit,
 } from '../api/client';
@@ -281,13 +280,7 @@ export const MonthlyInvoicePage: React.FC = () => {
       } finally {
         setImagesLoading(false);
       }
-      // 3. シート再同期 (DB 真値でシート上書き)
-      try {
-        await syncSheetsFromDB();
-      } catch (e) {
-        console.error('シート再同期エラー:', e);
-      }
-      // 4. 編集状態をリセット (新しい値を origin に)
+      // 編集状態をリセット (新しい値を origin に)
       setEditableNotes((prev) =>
         prev.map((n) =>
           n.id === note.id

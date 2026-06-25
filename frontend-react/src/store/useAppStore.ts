@@ -1,13 +1,7 @@
 import { create } from 'zustand';
-import type { DeliveryNote, DeliveryItem, CompanyInfo, PreviousBilling, Discrepancy } from '../types';
+import type { DeliveryNote, DeliveryItem, CompanyInfo, PreviousBilling } from '../types';
 
 interface AppState {
-  // 乖離チェック状態
-  discrepancies: Discrepancy[];
-  discrepancyLoading: boolean;
-  setDiscrepancies: (d: Discrepancy[]) => void;
-  setDiscrepancyLoading: (l: boolean) => void;
-
   // セッション状態
   salesPerson: string;
   selectedYear: number;
@@ -52,12 +46,6 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  // 乖離チェック初期状態
-  discrepancies: [],
-  discrepancyLoading: false,
-  setDiscrepancies: (d) => set({ discrepancies: d }),
-  setDiscrepancyLoading: (l) => set({ discrepancyLoading: l }),
-
   // 初期状態
   salesPerson: '',
   selectedYear: new Date().getFullYear(),
