@@ -8,7 +8,6 @@ import { PurchasePaymentPage } from './pages/PurchasePaymentPage';
 import { PaymentPage } from './pages/PaymentPage';
 import { BillingLedgerPage } from './pages/BillingLedgerPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { ReconciliationPage } from './pages/ReconciliationPage';
 
 function App() {
   return (
@@ -28,7 +27,6 @@ function App() {
           <Route path="/payment" element={<PaymentPage />} />
           <Route path="/billing-ledger" element={<BillingLedgerPage />} />
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/reconciliation" element={<ReconciliationPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

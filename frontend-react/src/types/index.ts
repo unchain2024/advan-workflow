@@ -167,20 +167,6 @@ export interface RegenerateInvoiceResponse {
   invoice_filename: string;
 }
 
-// 乖離チェック関連の型定義
-export interface Discrepancy {
-  company_name: string;
-  year_month: string;
-  db_subtotal: number;
-  db_tax: number;
-  sheet_subtotal: number;
-  sheet_tax: number;
-}
-
-export interface CheckDiscrepancyResponse {
-  discrepancies: Discrepancy[];
-}
-
 export interface DBDeliveryNote {
   id: number;
   slip_number: string;
