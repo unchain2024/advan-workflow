@@ -207,6 +207,37 @@ check("2月 繰越 = 前月+発生+税-入金", led2["carried_over"] == 15500,
 
 
 # ---------------------------------------------------------------------------
+# 7. 期首残高(opening_balance)編集 API 経由（Task B）
+# ---------------------------------------------------------------------------
+section("7. 期首残高編集 API (Task B)")
+
+# /payments で opening_balance + payment_amount を同時保存
+r = client.post("/api/payments", json={
+    "company_name": COMP, "year_month": "2025年1月",
+    "payment_amount": 0, "opening_balance": 50000,
+})
+check("/api/payments 200(opening_balance設定)", r.status_code == 200, str(r.status_code))
+check("レスポンスに opening_balance 反映", r.json().get("opening_balance") == 50000)
+
+# /billing-ledger に期首残高と繰越が反映される
+r = client.get("/api/billing-ledger", params={"company_name": COMP, "year": 2025})
+entries = {e["year_month"]: e for e in r.json()["entries"]}
+jan = entries.get("2025年1月", {})
+check("billing-ledger 1月 opening_balance=50000", jan.get("opening_balance") == 50000,
+      f"got={jan.get('opening_balance')}")
+# 1月: opening50000 + 発生10000 + 税1000 - 入金0 = 61000
+check("billing-ledger 1月 繰越に期首残高が反映", jan.get("carried_over") == 61000,
+      f"got={jan.get('carried_over')}")
+
+# 消滅のみ更新しても opening_balance が保持される（互いに上書きしない）
+r = client.post("/api/payments", json={
+    "company_name": COMP, "year_month": "2025年1月", "payment_amount": 1000,
+})
+check("消滅更新後も opening_balance 保持", r.json().get("opening_balance") == 50000,
+      f"got={r.json().get('opening_balance')}")
+
+
+# ---------------------------------------------------------------------------
 # まとめ
 # ---------------------------------------------------------------------------
 print(f"\n{'=' * 50}")

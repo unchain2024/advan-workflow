@@ -21,8 +21,9 @@ export const BillingLedgerPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // 編集用のローカル値（year_month → paymentAmount）
-  const [editing, setEditing] = useState<Record<string, string>>({});
+  // 編集用のローカル値（year_month → 文字列）
+  const [editing, setEditing] = useState<Record<string, string>>({});        // 消滅(入金)
+  const [editingOpen, setEditingOpen] = useState<Record<string, string>>({}); // 期首残高
 
   useEffect(() => {
     loadCompanies();
@@ -57,6 +58,7 @@ export const BillingLedgerPage: React.FC = () => {
       const data = await getBillingLedger(selectedCompany, selectedYear);
       setEntries(data.entries);
       setEditing({});
+      setEditingOpen({});
     } catch (err) {
       setError(err instanceof Error ? err.message : '台帳の取得に失敗しました');
       setEntries([]);
@@ -65,24 +67,31 @@ export const BillingLedgerPage: React.FC = () => {
     }
   };
 
-  const handleSavePayment = async (yearMonth: string) => {
-    const rawValue = editing[yearMonth];
-    if (rawValue === undefined) return;
-    const payment = parseInt(rawValue.replace(/,/g, ''), 10);
-    if (Number.isNaN(payment)) {
-      setError(`'${rawValue}' は数値として解釈できません`);
+  const handleSaveRow = async (entry: LedgerEntry) => {
+    const ym = entry.year_month;
+    const rawPay = editing[ym];
+    const rawOpen = editingOpen[ym];
+    if (rawPay === undefined && rawOpen === undefined) return;
+
+    const payment = rawPay !== undefined
+      ? parseInt(rawPay.replace(/,/g, ''), 10)
+      : entry.payment_amount;
+    const opening = rawOpen !== undefined
+      ? parseInt(rawOpen.replace(/,/g, ''), 10)
+      : entry.opening_balance;
+    if (Number.isNaN(payment) || Number.isNaN(opening)) {
+      setError('数値として解釈できない入力があります');
       return;
     }
-    setSavingCell(yearMonth);
+    setSavingCell(ym);
     setError(null);
     setSuccess(null);
     try {
-      const res = await upsertBillingPayment(selectedCompany, yearMonth, payment);
-      let msg = `${selectedCompany} ${yearMonth} の消滅を ¥${payment.toLocaleString()} で保存`;
-      if (!res.sheet_synced && res.sheet_error) {
-        msg += `（⚠ シート書込失敗: ${res.sheet_error}）`;
-      }
-      setSuccess(msg);
+      // payment_amount と opening_balance を同時に保存（互いを上書きしない）
+      await upsertBillingPayment(selectedCompany, ym, payment, opening);
+      setSuccess(
+        `${selectedCompany} ${ym} を保存（期首残高 ¥${opening.toLocaleString()} / 消滅 ¥${payment.toLocaleString()}）`
+      );
       await loadLedger();
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存に失敗しました');
@@ -106,7 +115,10 @@ export const BillingLedgerPage: React.FC = () => {
       <h1 className="text-4xl font-bold text-gray-800 mb-4">売上入金管理</h1>
       <p className="text-sm text-gray-600 mb-6">
         会社ごとの月次台帳（発生・消費税・消滅・残高）を DB から計算して表示します。
-        消滅セルをクリックして金額を入力すると、DB 保存 + スプレッドシートへのミラー書込が行われます。
+        <strong>期首残高</strong>と<strong>消滅（入金）</strong>を入力して保存できます。
+        <br />
+        ※ 期首残高は、レガシーからの移行時に各社のその月時点の繰越残高を入力する欄です
+        （その月以降の残高計算の起点になります）。
       </p>
 
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
@@ -159,6 +171,7 @@ export const BillingLedgerPage: React.FC = () => {
               <tr>
                 <th className="px-3 py-2 text-left border-b">年月</th>
                 <th className="px-3 py-2 text-right border-b">前月残高</th>
+                <th className="px-3 py-2 text-right border-b">期首残高</th>
                 <th className="px-3 py-2 text-right border-b">発生</th>
                 <th className="px-3 py-2 text-right border-b">消費税</th>
                 <th className="px-3 py-2 text-right border-b">消滅（入金）</th>
@@ -171,8 +184,12 @@ export const BillingLedgerPage: React.FC = () => {
               {entries.map((e) => {
                 const editValue = editing[e.year_month];
                 const hasEdit = editValue !== undefined;
+                const openValue = editingOpen[e.year_month];
+                const hasOpenEdit = openValue !== undefined;
+                const rowDirty = hasEdit || hasOpenEdit;
                 const isSaving = savingCell === e.year_month;
-                const hasActivity = e.subtotal !== 0 || e.tax !== 0 || e.payment_amount !== 0;
+                const hasActivity =
+                  e.subtotal !== 0 || e.tax !== 0 || e.payment_amount !== 0 || e.opening_balance !== 0;
                 return (
                   <tr
                     key={e.year_month}
@@ -181,6 +198,37 @@ export const BillingLedgerPage: React.FC = () => {
                     <td className="px-3 py-2">{e.year_month}</td>
                     <td className="px-3 py-2 text-right">
                       ¥{e.previous_balance.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={
+                          hasOpenEdit
+                            ? openValue
+                            : e.opening_balance === 0
+                            ? ''
+                            : e.opening_balance.toLocaleString()
+                        }
+                        placeholder="0"
+                        onChange={(ev) =>
+                          setEditingOpen((prev) => ({
+                            ...prev,
+                            [e.year_month]: ev.target.value,
+                          }))
+                        }
+                        onFocus={(ev) => {
+                          if (!hasOpenEdit) {
+                            setEditingOpen((prev) => ({
+                              ...prev,
+                              [e.year_month]: String(e.opening_balance),
+                            }));
+                          }
+                          ev.target.select();
+                        }}
+                        className="w-28 border border-gray-300 rounded px-2 py-1 text-right bg-white"
+                        disabled={isSaving}
+                      />
                     </td>
                     <td className="px-3 py-2 text-right">¥{e.subtotal.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right">¥{e.tax.toLocaleString()}</td>
@@ -220,9 +268,9 @@ export const BillingLedgerPage: React.FC = () => {
                     </td>
                     <td className="px-3 py-2 text-center">{e.notes_count}</td>
                     <td className="px-3 py-2 text-center">
-                      {hasEdit && (
+                      {rowDirty && (
                         <Button
-                          onClick={() => handleSavePayment(e.year_month)}
+                          onClick={() => handleSaveRow(e)}
                           disabled={isSaving}
                           variant="primary"
                         >
@@ -240,8 +288,8 @@ export const BillingLedgerPage: React.FC = () => {
 
       <div className="mt-4 text-xs text-gray-500">
         <p>
-          ※ 発生・消費税は DB の納品書データから集計しています。
-          消滅の保存は DB に書き込み後、スプレッドシートにもミラー書込します（シート書込失敗しても DB は保持）。
+          ※ 発生・消費税は DB の納品書データから集計しています。残高 = 前月残高 + 期首残高 + 発生 + 消費税 − 消滅。
+          すべて DB に保存されます（シート非依存）。
         </p>
       </div>
     </div>
