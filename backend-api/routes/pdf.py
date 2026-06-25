@@ -14,7 +14,8 @@ from pdf2image import convert_from_path
 from PIL import Image
 
 from src.extractor import UnifiedExtractor
-from src.sheets_client import GoogleSheetsClient, PreviousBilling
+from src import sheets_client
+from src.sheets_client import PreviousBilling
 from src.invoice_generator import InvoiceGenerator
 from src.pdf_extractor import DeliveryNote, DeliveryItem
 from src.canonical_companies import list_canonicals
@@ -201,7 +202,6 @@ async def process_pdf(
         effective_company_name = company_name_override.strip() if company_name_override.strip() else delivery_note.company_name
 
         # 1.5. 会社名をスプレッドシートの正規名に統一
-        sheets_client = GoogleSheetsClient()
         target_year = year if year else None
         if not target_year and delivery_note.date:
             try:
@@ -366,7 +366,6 @@ async def regenerate_invoice(request: RegenerateInvoiceRequest):
         # 会社名をスプレッドシートの正規名に統一
         company_name = request.delivery_note.company_name
         try:
-            sheets_client = GoogleSheetsClient()
             target_year = None
             if request.delivery_note.date:
                 try:
@@ -485,7 +484,6 @@ async def regenerate_group_invoice(request: RegenerateGroupInvoiceRequest):
         # 念のため canonical lookup を試みる（失敗時は raw 名のまま継続）
         company_name = request.company_name
         try:
-            sheets_client = GoogleSheetsClient()
             target_year = None
             if request.delivery_notes and request.delivery_notes[0].date:
                 try:
@@ -723,7 +721,6 @@ async def generate_monthly_invoice(request: GenerateMonthlyInvoiceRequest):
     try:
         # 0. 会社名をスプレッドシートの正規名に統一
         company_name = request.company_name
-        sheets_client = GoogleSheetsClient()
         import re
         match = re.match(r'(\d+)年(\d+)月', request.year_month)
         if match:
@@ -856,7 +853,6 @@ async def get_company_billing_info(company_name: str, year_month: str):
     """指定した会社・年月の前月請求情報＋会社情報を取得"""
     import unicodedata
     company_name = unicodedata.normalize('NFKC', company_name)
-    sheets_client = GoogleSheetsClient()
     canonical = sheets_client.get_canonical_company_name(company_name)
     if canonical:
         company_name = canonical

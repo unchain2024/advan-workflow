@@ -10,7 +10,8 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Query
 from pydantic import BaseModel
 
 from src.purchase_extractor import PurchaseExtractor, PurchaseInvoice, PurchaseItem
-from src.sheets_client import GoogleSheetsClient, parse_amount, _find_company_row
+from src import sheets_client
+from src.sheets_client import parse_amount, _find_company_row
 from src.database import MonthlyItemsDB
 from src.canonical_companies import (
     list_canonicals,
@@ -222,7 +223,6 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
         # Phase 5a/5b: canonical 解決 + 課税/非課税 hint を適用
         # ファイル名ヒントで親/子を判別、PURCHASE_TAXABILITY 登録会社は LLM 抽出値を上書き
         # canonical 化結果を invoice ごとに記録して response に含める (Phase 5d': UI即時picker表示)
-        sheets_client = GoogleSheetsClient()
         canonical_match_results: list[tuple[bool, list[str]]] = []  # (matched, candidates)
         for inv in invoices:
             raw_supplier = inv.supplier_name
@@ -346,7 +346,6 @@ async def save_purchase(request: SavePurchaseRequest):
             )
 
         # 2. 会社名正規化（Phase 1: canonical 不一致は 400 reject、auto-add 厳禁）
-        sheets_client = GoogleSheetsClient()
         company_name = request.company_name
         target_year = _extract_year_from_year_month(request.year_month)
         canonical = sheets_client.get_canonical_purchase_company_name(

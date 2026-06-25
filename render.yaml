@@ -19,12 +19,6 @@ services:
       - key: PYTHON_VERSION
         value: "3.11"
 
-      # 認証設定（サービスアカウント使用）
-      - key: USE_OAUTH
-        value: "false"
-      - key: GOOGLE_CREDENTIALS_BASE64
-        sync: false  # Render Dashboardで手動設定
-
       # 抽出器バックエンド (claude / gemini)
       - key: EXTRACTOR_BACKEND
         value: "claude"
@@ -42,27 +36,4 @@ services:
         sync: false  # Render Dashboardで手動設定
       - key: GEMINI_MODEL
         value: "gemini-3-flash-preview"
-
-      # Google Sheets ID（会社情報マスター）
-      - key: COMPANY_MASTER_SPREADSHEET_ID
-        sync: false
-      - key: COMPANY_MASTER_SHEET_NAME
-        value: "マスター"
-
-      # Google Sheets ID（売上集計）
-      - key: BILLING_SPREADSHEET_ID
-        sync: false
-      - key: BILLING_SHEET_NAME
-        value: "1月-12月集計"
-
-      # Google Sheets ID（仕入れ管理）
-      - key: PURCHASE_SPREADSHEET_ID
-        sync: false
-      - key: PURCHASE_SHEET_NAME
-        value: "1月-12月集計"
-
-      # Google Sheets ID（締め日マスター）
-      - key: PURCHASE_TERMS_SPREADSHEET_ID
-        sync: false
-      - key: PURCHASE_TERMS_SHEET_NAME
-        value: "国内仕入先支払条件"
+      # 注: Google Sheets 関連の env は廃止（シート脱却済み・DB単独運用）

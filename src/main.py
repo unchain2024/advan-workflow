@@ -21,7 +21,7 @@ from pathlib import Path
 from .config import INPUT_DIR, OUTPUT_DIR
 from .invoice_generator import InvoiceGenerator
 from .extractor import UnifiedExtractor
-from .sheets_client import GoogleSheetsClient
+from . import sheets_client
 
 
 def extract_year_month(date_str: str) -> str:
@@ -76,11 +76,8 @@ def process_delivery_note(pdf_path: Path, dry_run: bool = False) -> Path:
         if len(delivery_note.items) > 5:
             print(f"      ... 他 {len(delivery_note.items) - 5} 件")
 
-    # 2. Google Sheets連携
-    sheets_client = GoogleSheetsClient()
-
-    # 会社情報を取得
-    print("  - 会社マスターから情報を取得中...")
+    # 2. 会社情報を取得（DB由来・シート非依存）
+    print("  - 会社マスター(DB)から情報を取得中...")
     company_info = sheets_client.get_company_info(delivery_note.company_name)
     if company_info:
         print(f"    会社情報取得: 〒{company_info.postal_code} {company_info.address}")
@@ -108,24 +105,7 @@ def process_delivery_note(pdf_path: Path, dry_run: bool = False) -> Path:
         previous_billing=previous_billing,
     )
     print(f"    出力: {invoice_path}")
-
-    # 4. 売上集計表に保存
-    # 注意: CLI 経路は DB を介さず単一 PDF の値を直接シートへ書く（Phase 2 後は集計値が望ましい）
-    if not dry_run:
-        print("  - 売上集計表に保存中...")
-        target_ym = (
-            sheets_client._parse_year_month(delivery_note.date)
-            if delivery_note.date
-            else ""
-        )
-        sheets_client.save_billing_record(
-            company_name=delivery_note.company_name,
-            target_year_month=target_ym,
-            subtotal=delivery_note.subtotal,
-            tax=delivery_note.tax,
-        )
-    else:
-        print("  - [DRY RUN] 売上集計表への保存をスキップ")
+    # 注: シート保存は廃止（DB-as-truth）。CLIは請求書PDF生成のみ。
 
     print(f"完了: {pdf_path}")
     return invoice_path
