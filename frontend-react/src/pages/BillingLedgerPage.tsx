@@ -25,6 +25,9 @@ export const BillingLedgerPage: React.FC = () => {
   const [editing, setEditing] = useState<Record<string, string>>({});        // 消滅(入金)
   const [editingOpen, setEditingOpen] = useState<Record<string, string>>({}); // 期首残高
 
+  // 期首残高は移行時のみ使う一度きりの値。普段は隠す（トグルでON）
+  const [showOpeningBalance, setShowOpeningBalance] = useState(false);
+
   useEffect(() => {
     loadCompanies();
   }, []);
@@ -115,10 +118,7 @@ export const BillingLedgerPage: React.FC = () => {
       <h1 className="text-4xl font-bold text-gray-800 mb-4">売上入金管理</h1>
       <p className="text-sm text-gray-600 mb-6">
         会社ごとの月次台帳（発生・消費税・消滅・残高）を DB から計算して表示します。
-        <strong>期首残高</strong>と<strong>消滅（入金）</strong>を入力して保存できます。
-        <br />
-        ※ 期首残高は、レガシーからの移行時に各社のその月時点の繰越残高を入力する欄です
-        （その月以降の残高計算の起点になります）。
+        <strong>消滅（入金）</strong>を入力して保存できます。
       </p>
 
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
@@ -157,6 +157,25 @@ export const BillingLedgerPage: React.FC = () => {
             </Button>
           </div>
         </div>
+        <div className="mt-3 pt-3 border-t border-gray-200">
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input
+              type="checkbox"
+              checked={showOpeningBalance}
+              onChange={(e) => {
+                setShowOpeningBalance(e.target.checked);
+                if (!e.target.checked) setEditingOpen({});
+              }}
+            />
+            移行残高を設定する（期首残高の入力欄を表示）
+          </label>
+          {showOpeningBalance && (
+            <p className="text-xs text-gray-500 mt-1">
+              ※ レガシーからの移行時に、各社のその月時点の繰越残高を一度だけ入力する欄です
+              （その月以降の残高計算の起点になります）。通常運用では使いません。
+            </p>
+          )}
+        </div>
       </div>
 
       {error && <Message type="error">{error}</Message>}
@@ -171,7 +190,9 @@ export const BillingLedgerPage: React.FC = () => {
               <tr>
                 <th className="px-3 py-2 text-left border-b">年月</th>
                 <th className="px-3 py-2 text-right border-b">前月残高</th>
-                <th className="px-3 py-2 text-right border-b">期首残高</th>
+                {showOpeningBalance && (
+                  <th className="px-3 py-2 text-right border-b">期首残高</th>
+                )}
                 <th className="px-3 py-2 text-right border-b">発生</th>
                 <th className="px-3 py-2 text-right border-b">消費税</th>
                 <th className="px-3 py-2 text-right border-b">消滅（入金）</th>
@@ -199,37 +220,39 @@ export const BillingLedgerPage: React.FC = () => {
                     <td className="px-3 py-2 text-right">
                       ¥{e.previous_balance.toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 text-right">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={
-                          hasOpenEdit
-                            ? openValue
-                            : e.opening_balance === 0
-                            ? ''
-                            : e.opening_balance.toLocaleString()
-                        }
-                        placeholder="0"
-                        onChange={(ev) =>
-                          setEditingOpen((prev) => ({
-                            ...prev,
-                            [e.year_month]: ev.target.value,
-                          }))
-                        }
-                        onFocus={(ev) => {
-                          if (!hasOpenEdit) {
+                    {showOpeningBalance && (
+                      <td className="px-3 py-2 text-right">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={
+                            hasOpenEdit
+                              ? openValue
+                              : e.opening_balance === 0
+                              ? ''
+                              : e.opening_balance.toLocaleString()
+                          }
+                          placeholder="0"
+                          onChange={(ev) =>
                             setEditingOpen((prev) => ({
                               ...prev,
-                              [e.year_month]: String(e.opening_balance),
-                            }));
+                              [e.year_month]: ev.target.value,
+                            }))
                           }
-                          ev.target.select();
-                        }}
-                        className="w-28 border border-gray-300 rounded px-2 py-1 text-right bg-white"
-                        disabled={isSaving}
-                      />
-                    </td>
+                          onFocus={(ev) => {
+                            if (!hasOpenEdit) {
+                              setEditingOpen((prev) => ({
+                                ...prev,
+                                [e.year_month]: String(e.opening_balance),
+                              }));
+                            }
+                            ev.target.select();
+                          }}
+                          className="w-28 border border-gray-300 rounded px-2 py-1 text-right bg-white"
+                          disabled={isSaving}
+                        />
+                      </td>
+                    )}
                     <td className="px-3 py-2 text-right">¥{e.subtotal.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right">¥{e.tax.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right">
