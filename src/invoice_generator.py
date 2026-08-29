@@ -49,7 +49,20 @@ class InvoiceGenerator:
 
     FONT_NAME = "JapaneseFont"
     PAGE_WIDTH, PAGE_HEIGHT = A4  # 縦向きA4
-    ITEMS_PER_PAGE = 18  # 1ページあたりの最大明細行数（ページ累計行を含まない）
+    ITEMS_PER_PAGE = 18  # 1ページあたりの最大明細ライン数（折り返し行を含む、ページ累計行を含まない）
+
+    # 明細テーブルの列定義。合計180mm（A4幅210mm - 左右マージン15mm×2）。
+    # 伝票番号は最長16桁（8ptで約28.4mm）が1行で収まる幅を確保する。
+    # 幅を超える伝票番号・商品コード・品名は切り捨てず折り返す。
+    DETAIL_COLUMNS = [
+        ("日付", 15 * mm),
+        ("伝票番号", 31 * mm),
+        ("商品コード", 28 * mm),
+        ("品      名", 56 * mm),
+        ("数量", 12 * mm),
+        ("単価", 18 * mm),
+        ("金額", 20 * mm),
+    ]
 
     def __init__(self, font_path: Optional[str] = None):
         self.font_path = font_path or PDF_FONT_PATH
@@ -196,7 +209,8 @@ class InvoiceGenerator:
             separator = DeliveryItem(
                 slip_number="",
                 product_code="",
-                product_name=f"=== 納品日: {note.date} (伝票番号: {note.slip_number}) ===",
+                # 納品日は行の日付列に出るため見出しには入れず、伝票番号が切れないようにする
+                product_name=f"=== 伝票番号: {note.slip_number}",
                 quantity=0,
                 unit_price=0,
                 amount=0,
@@ -272,18 +286,14 @@ class InvoiceGenerator:
         # 実際の明細を追加
         all_items.extend(data.items)
 
-        # ページ分割
-        total_pages = (len(all_items) + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE
-        if total_pages == 0:
-            total_pages = 1
+        # ページ分割（品名等の折り返しで1明細が複数ラインになるため、ライン数で詰める）
+        self._register_font()
+        pages = self._paginate_items(c, all_items)
 
-        for page_num in range(total_pages):
+        total_pages = len(pages)
+        for page_num, page_items in enumerate(pages):
             if page_num > 0:
                 c.showPage()  # 新しいページ
-
-            start_idx = page_num * self.ITEMS_PER_PAGE
-            end_idx = min(start_idx + self.ITEMS_PER_PAGE, len(all_items))
-            page_items = all_items[start_idx:end_idx]
 
             self._draw_page(c, data, page_items, page_num + 1, total_pages, width, height)
 
@@ -434,15 +444,7 @@ class InvoiceGenerator:
     def _draw_detail_table(self, c, data: InvoiceData, page_items: list, x, y, table_width, page_num: int):
         """明細テーブルを描画（ページ累計列なし、ページ累計行あり）"""
         # カラム定義（ページ累計列を削除）
-        columns = [
-            ("日付", 18 * mm),
-            ("伝票番号", 18 * mm),
-            ("商品コード", 25 * mm),
-            ("品      名", 50 * mm),
-            ("数量", 12 * mm),
-            ("単価", 18 * mm),
-            ("金額", 20 * mm),
-        ]
+        columns = self.DETAIL_COLUMNS
 
         row_height = 6 * mm
         header_height = 8 * mm
@@ -465,11 +467,19 @@ class InvoiceGenerator:
         data_y = y - header_height
         page_total_quantity = 0
         page_total_amount = 0
-        c.setFont(self.FONT_NAME, 8)
+        c.setFont(self.FONT_NAME, self.DETAIL_FONT_SIZE)
 
+        used_lines = 0
         for item in page_items:
-            data_y -= row_height
+            slip_lines, code_lines, name_lines = self._item_cell_lines(c, item, columns)
+            n_lines = max(1, min(self.ITEMS_PER_PAGE, max(len(slip_lines), len(code_lines), len(name_lines))))
+            row_h = row_height * n_lines
+            used_lines += n_lines
+
+            data_y -= row_h
             current_x = x
+            # 1行目（最上段）のベースライン。折り返し行はここから row_height ずつ下げる
+            first_line_y = data_y + row_h - row_height + 1.5 * mm
 
             # 日付（アイテムにdateがあればそれを使用、なければdata.dateを使用）
             item_date = getattr(item, 'date', '') or data.date
@@ -491,46 +501,33 @@ class InvoiceGenerator:
                     print(f"日付変換エラー: {item_date} -> {e}")
                     date_str = item_date
 
-            c.rect(current_x, data_y, columns[0][1], row_height)
-            c.drawString(current_x + 1 * mm, data_y + 1.5 * mm, date_str)
+            c.rect(current_x, data_y, columns[0][1], row_h)
+            c.drawString(current_x + 1 * mm, first_line_y, date_str)
             current_x += columns[0][1]
 
-            # 伝票番号（明細行の伝票番号を使用、"None"の場合は空欄に）
-            # 伝票番号がない場合は日付列を空欄にする
-            slip_num = ""
-            if item.slip_number and item.slip_number != "None" and len(item.slip_number.strip()) > 0:
-                slip_num = item.slip_number[:10]
-            c.rect(current_x, data_y, columns[1][1], row_height)
-            c.drawString(current_x + 1 * mm, data_y + 1.5 * mm, slip_num)
-            current_x += columns[1][1]
-
-            # 商品コード（"None"の場合は空欄に）
-            prod_code = item.product_code[:15] if item.product_code and item.product_code != "None" else ""
-            c.rect(current_x, data_y, columns[2][1], row_height)
-            c.drawString(current_x + 1 * mm, data_y + 1.5 * mm, prod_code)
-            current_x += columns[2][1]
-
-            # 品名（短く切り詰める）
-            c.rect(current_x, data_y, columns[3][1], row_height)
-            c.drawString(current_x + 1 * mm, data_y + 1.5 * mm, item.product_name[:30])
-            current_x += columns[3][1]
+            # 伝票番号・商品コード・品名（折り返し描画）
+            for col_idx, lines in ((1, slip_lines), (2, code_lines), (3, name_lines)):
+                c.rect(current_x, data_y, columns[col_idx][1], row_h)
+                for i, line in enumerate(lines[:n_lines]):
+                    c.drawString(current_x + 1 * mm, first_line_y - i * row_height, line)
+                current_x += columns[col_idx][1]
 
             # 数量
-            c.rect(current_x, data_y, columns[4][1], row_height)
+            c.rect(current_x, data_y, columns[4][1], row_h)
             if item.quantity > 0:  # 数量が0の場合は表示しない（前回請求額など）
-                c.drawRightString(current_x + columns[4][1] - 1 * mm, data_y + 1.5 * mm, str(item.quantity))
+                c.drawRightString(current_x + columns[4][1] - 1 * mm, first_line_y, str(item.quantity))
                 page_total_quantity += item.quantity
             current_x += columns[4][1]
 
             # 単価
-            c.rect(current_x, data_y, columns[5][1], row_height)
+            c.rect(current_x, data_y, columns[5][1], row_h)
             if item.unit_price > 0:
-                c.drawRightString(current_x + columns[5][1] - 1 * mm, data_y + 1.5 * mm, f"{item.unit_price:,}")
+                c.drawRightString(current_x + columns[5][1] - 1 * mm, first_line_y, f"{item.unit_price:,}")
             current_x += columns[5][1]
 
             # 金額
-            c.rect(current_x, data_y, columns[6][1], row_height)
-            c.drawRightString(current_x + columns[6][1] - 1 * mm, data_y + 1.5 * mm, f"{item.amount:,}")
+            c.rect(current_x, data_y, columns[6][1], row_h)
+            c.drawRightString(current_x + columns[6][1] - 1 * mm, first_line_y, f"{item.amount:,}")
             page_total_amount += item.amount
             current_x += columns[6][1]
 
@@ -552,13 +549,86 @@ class InvoiceGenerator:
             current_x += col_width
 
         # 空行を追加して表を埋める（必要に応じて）
-        remaining_rows = self.ITEMS_PER_PAGE - len(page_items)
+        remaining_rows = self.ITEMS_PER_PAGE - used_lines
         for _ in range(max(0, remaining_rows)):
             data_y -= row_height
             current_x = x
             for _, col_width in columns:
                 c.rect(current_x, data_y, col_width, row_height)
                 current_x += col_width
+
+    DETAIL_FONT_SIZE = 8
+
+    def _wrap_text(self, c, text: str, max_width: float, font_size: int) -> list[str]:
+        """テキストを列幅に収まるように折り返す（描画幅で判定、切り捨てはしない）
+
+        英数字はできるだけ空白位置で折り返し、日本語など空白のない文字列は文字単位で折り返す。
+        """
+        text = (text or "").strip()
+        if not text:
+            return [""]
+
+        def width(t: str) -> float:
+            return c.stringWidth(t, self.FONT_NAME, font_size)
+
+        if width(text) <= max_width:
+            return [text]
+
+        lines: list[str] = []
+        current = ""
+        for ch in text:
+            if width(current + ch) <= max_width:
+                current += ch
+                continue
+            # 収まらない: 直近の空白で折り返せるなら単語単位で
+            split_at = current.rfind(" ")
+            if split_at > 0 and ch != " ":
+                lines.append(current[:split_at])
+                current = current[split_at + 1:] + ch
+            else:
+                lines.append(current)
+                current = ch if ch != " " else ""
+        if current:
+            lines.append(current)
+        return lines or [""]
+
+    def _item_cell_lines(self, c, item, columns) -> tuple[list[str], list[str], list[str]]:
+        """明細1件の伝票番号・商品コード・品名を折り返し済みの行リストにする"""
+        pad = 2 * mm
+        fs = self.DETAIL_FONT_SIZE
+
+        slip = ""
+        if item.slip_number and item.slip_number != "None" and item.slip_number.strip():
+            slip = item.slip_number.strip()
+        code = item.product_code if item.product_code and item.product_code != "None" else ""
+        name = item.product_name or ""
+
+        return (
+            self._wrap_text(c, slip, columns[1][1] - pad, fs),
+            self._wrap_text(c, code, columns[2][1] - pad, fs),
+            self._wrap_text(c, name, columns[3][1] - pad, fs),
+        )
+
+    def _item_line_count(self, c, item) -> int:
+        """明細1件が占めるライン数（折り返し後の最大行数、最小1・最大ITEMS_PER_PAGE）"""
+        cells = self._item_cell_lines(c, item, self.DETAIL_COLUMNS)
+        return max(1, min(self.ITEMS_PER_PAGE, max(len(col) for col in cells)))
+
+    def _paginate_items(self, c, items: list) -> list[list]:
+        """ITEMS_PER_PAGE ライン以内に収まるように明細をページに詰める"""
+        pages: list[list] = []
+        current: list = []
+        used = 0
+        for item in items:
+            n = self._item_line_count(c, item)
+            if current and used + n > self.ITEMS_PER_PAGE:
+                pages.append(current)
+                current, used = [], 0
+            current.append(item)
+            used += n
+        if current or not pages:
+            pages.append(current)
+        return pages
 
     def _draw_page_info(self, c, data: InvoiceData, x, y, page_num: int):
         """ページ番号と請求書番号を描画（右上）"""
