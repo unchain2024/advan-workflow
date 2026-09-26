@@ -284,6 +284,12 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
                         f"indicators={inv.detected_indicators})"
                     )
 
+        # 1.5. 金額整合（課税で税0なら10%補完、合計=小計+消費税）
+        for inv in invoices:
+            applied = inv.normalize_amounts()
+            if applied:
+                print(f"  [金額補正] slip={inv.slip_number or '(なし)'}: {' / '.join(applied)}")
+
         # 2. 納品書PDFをoutputディレクトリに保存
         output_dir = Path(__file__).parent.parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
@@ -369,6 +375,37 @@ async def save_purchase(request: SavePurchaseRequest):
             parts = year_month_str.split('-')
             year_month_str = f"{int(parts[0])}年{int(parts[1])}月"
 
+        # 3.5. 伝票番号の検証（空・重複はDBキー衝突で上書きされるため拒否）
+        #      DB は 仕入先×月×伝票番号 で1件を識別する。伝票番号が無い伝票は
+        #      画面で手入力させる（自動採番はしない）。
+        seen_slips: dict[str, int] = {}
+        empty_idx: list[int] = []
+        dup_slips: list[str] = []
+        for i, note_req in enumerate(request.purchase_notes):
+            slip = (note_req.slip_number or "").strip()
+            if not slip:
+                empty_idx.append(i + 1)
+                continue
+            if slip in seen_slips and slip not in dup_slips:
+                dup_slips.append(slip)
+            seen_slips[slip] = i
+        if empty_idx or dup_slips:
+            problems = []
+            if empty_idx:
+                problems.append(f"伝票番号が空: {len(empty_idx)}件（{', '.join(f'#{i}' for i in empty_idx)}）")
+            if dup_slips:
+                problems.append(f"伝票番号が重複: {', '.join(dup_slips)}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_slip_numbers",
+                    "empty_indexes": empty_idx,
+                    "duplicate_slip_numbers": dup_slips,
+                    "message": "伝票番号が空または重複している伝票があります。伝票番号を入力してから保存してください。（"
+                    + " / ".join(problems) + "）",
+                },
+            )
+
         # 4. PurchaseInvoiceオブジェクトリストを構築
         # Phase 5d': save 時にも canonical 化済 company_name を使って Layer 2/3 を再適用する。
         # process-pdf 段階で canonical 化失敗してピッカー選択された invoice は、選択時点で
@@ -412,17 +449,22 @@ async def save_purchase(request: SavePurchaseRequest):
                     )
                 is_taxable = final_taxable
 
-            purchase_invoices.append(PurchaseInvoice(
+            pi = PurchaseInvoice(
                 date=note_req.date,
                 supplier_name=company_name,
-                slip_number=note_req.slip_number,
+                slip_number=note_req.slip_number.strip(),
                 items=items,
                 subtotal=note_req.subtotal,
                 tax=note_req.tax,
                 total=note_req.total,
                 is_taxable=is_taxable,
                 detected_indicators=note_req.detected_indicators,
-            ))
+            )
+            # 課税区分確定後に金額整合（課税で税0→10%、合計=小計+消費税）
+            applied = pi.normalize_amounts()
+            if applied:
+                print(f"  [save時 金額補正] slip={pi.slip_number}: {' / '.join(applied)}")
+            purchase_invoices.append(pi)
 
         # 5. 重複チェック
         if not request.force_overwrite:
