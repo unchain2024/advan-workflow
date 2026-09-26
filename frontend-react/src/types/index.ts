@@ -65,6 +65,17 @@ export interface CreateCompanyRequest {
   address?: string;
   department?: string;
   taxable?: boolean | null;
+  /** 類似会社の警告(409)を確認済みで、それでも追加する場合 true */
+  force?: boolean;
+}
+
+/** 追加時に見つかった類似会社（409 レスポンスの detail.similar） */
+export interface SimilarCompanyItem {
+  id: number;
+  canonical_name: string;
+  postal_code: string;
+  address: string;
+  reasons: string[];
 }
 
 export interface UpdateCompanyRequest {
@@ -91,6 +102,11 @@ export interface ProcessPDFResponse {
   company_matched: boolean;
   sheet_company_candidates: string[];
   suggested_company_candidates: string[];
+  /** 1 PDF 複数伝票: 2 件目以降の伝票（先頭伝票がレスポンス本体） */
+  additional_results?: ProcessPDFResponse[];
+  /** この伝票が元 PDF の何ページ目か（1-based） */
+  page_numbers?: number[];
+  source_filename?: string;
 }
 
 export interface CompaniesAndMonthsResponse {

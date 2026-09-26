@@ -18,7 +18,8 @@ import anthropic
 from pdf2image import convert_from_path
 from PIL import Image
 
-from .config import ANTHROPIC_API_KEY, CLAUDE_MODEL, load_company_config
+from .config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from .company_resolver import resolve_company_name
 from .llm_extractor import EXTRACTION_PROMPT
 from .pdf_extractor import DeliveryItem, DeliveryNote
 
@@ -43,29 +44,54 @@ class ClaudeExtractor:
 
         self.client = anthropic.Anthropic(api_key=self.api_key)
 
-    def extract(self, pdf_path: Path) -> DeliveryNote:
-        """PDFから納品書データを抽出"""
+    def extract(self, pdf_path: Path, filename: Optional[str] = None) -> DeliveryNote:
+        """PDF 全体を 1 枚の納品書として抽出（従来動作）"""
         images = self._pdf_to_images(pdf_path)
         print(f"  PDF → {len(images)} ページの画像に変換 (Claude/{self.model})")
+        return self.extract_from_images(images, filename=filename)
 
-        max_retries = 6
+    def extract_from_images(
+        self, images: list[Image.Image], filename: Optional[str] = None
+    ) -> DeliveryNote:
+        """画像リスト（= 1 伝票分のページ群）から DeliveryNote を抽出"""
+        raw = self._extract_raw(images)
+        return self._postprocess(raw, filename=filename)
+
+    def _extract_raw(
+        self, images: list[Image.Image], max_retries: int = 6, allow_empty: bool = False
+    ):
+        """Claude に画像を送り、生 JSON（dict または list）を返す（リトライ付き）
+
+        allow_empty=True のときは空の dict/list も成功扱い（白紙ページ判定用）。
+        """
         extracted = None
         for attempt in range(1, max_retries + 1):
-            print(f"\n=== Claude APIに画像を直接送信中 (試行 {attempt}/{max_retries}) ===")
+            print(
+                f"\n=== Claude APIに画像を直接送信中 "
+                f"({len(images)}ページ, 試行 {attempt}/{max_retries}) ==="
+            )
             extracted = self._extract_with_claude(images)
-            if extracted is not None:
+            ok = extracted is not None if allow_empty else bool(extracted)
+            if ok:
                 break
             print(f"  ⚠️ 試行 {attempt} 失敗、{'リトライします...' if attempt < max_retries else '全試行失敗'}")
 
-        if not extracted:
+        if extracted is None or (not allow_empty and not extracted):
             raise ValueError(f"データの抽出に失敗しました（{max_retries}回リトライ後）")
+        return extracted
 
+    def _postprocess(self, extracted, filename: Optional[str] = None) -> DeliveryNote:
+        """生 JSON → 日付検証・会社名解決 → DeliveryNote"""
         if isinstance(extracted, list):
             print(f"  ⚠️ Claudeがリスト({len(extracted)}件)を返却 → 1件にマージ")
-            merged: dict = extracted[0] if extracted else {}
+            merged: dict = dict(extracted[0]) if extracted else {}
             all_items = []
+            all_candidates = []
             for entry in extracted:
-                all_items.extend(entry.get("items", []))
+                if not isinstance(entry, dict):
+                    continue
+                all_items.extend(entry.get("items", []) or [])
+                all_candidates.extend(entry.get("company_candidates", []) or [])
                 for key in [
                     "date",
                     "company_name",
@@ -78,7 +104,10 @@ class ClaudeExtractor:
                     if not merged.get(key) and entry.get(key):
                         merged[key] = entry[key]
             merged["items"] = all_items
+            merged["company_candidates"] = all_candidates
             extracted = merged
+        if not isinstance(extracted, dict):
+            extracted = {}
 
         date_str = extracted.get("date") or ""
         import re as _re
@@ -88,35 +117,9 @@ class ClaudeExtractor:
             print(f"  ⚠️ 警告: 無効な日付形式: '{date_str}' → null")
             date_str = ""
 
-        # 自社名フィルタ
-        company_name = extracted.get("company_name", "") or ""
-        if company_name:
-            own = load_company_config()
-            own_name = own.get("company_name", "")
-
-            def _norm(name: str) -> str:
-                name = _re.sub(r"株式会社|有限会社|合同会社|合資会社|合名会社", "", name)
-                name = _re.sub(
-                    r"\bCO\.?\s*,?\s*LTD\.?\b|\bINC\.?\b|\bCORP\.?\b",
-                    "",
-                    name,
-                    flags=_re.IGNORECASE,
-                )
-                name = _re.sub(r"御中|様|殿", "", name)
-                return (
-                    name.replace(" ", "")
-                    .replace("　", "")
-                    .replace(".", "")
-                    .replace(",", "")
-                    .strip()
-                    .upper()
-                )
-
-            n_own = _norm(own_name) if own_name else ""
-            n_ext = _norm(company_name)
-            if n_own and n_ext and (n_own in n_ext or n_ext in n_own):
-                print(f"警告: 自社名と一致 → 除外: {company_name}")
-                company_name = ""
+        # 会社名解決: 候補（company_candidates + company_name）から自社名を除外し、
+        # マスタ一致・役割・確信度でスコアリングして 1 件選ぶ
+        company_name, _ = resolve_company_name(extracted, domain="sales", filename=filename)
 
         merged_data = {
             "date": date_str,
@@ -128,7 +131,7 @@ class ClaudeExtractor:
             "payment_received": extracted.get("payment_received", 0),
             "is_return": extracted.get("is_return", False),
         }
-        return self._to_delivery_note(merged_data, extracted.get("items", []))
+        return self._to_delivery_note(merged_data, extracted.get("items", []) or [])
 
     def _pdf_to_images(self, pdf_path: Path) -> list[Image.Image]:
         return convert_from_path(str(pdf_path), dpi=300)

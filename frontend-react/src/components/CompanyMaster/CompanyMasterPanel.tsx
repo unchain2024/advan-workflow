@@ -8,7 +8,7 @@ import {
   updateCompanyMaster,
   deactivateCompanyMaster,
 } from '../../api/client';
-import type { CompanyDomain, CompanyMasterItem } from '../../types';
+import type { CompanyDomain, CompanyMasterItem, SimilarCompanyItem } from '../../types';
 
 // 課税区分の選択肢（仕入のみ）。null=自動判定（LLM抽出値に委ねる）
 type TaxableChoice = 'true' | 'false' | 'auto';
@@ -46,6 +46,8 @@ export const CompanyMasterPanel: React.FC = () => {
   // 新規追加フォーム
   const [newCompany, setNewCompany] = useState(emptyNew);
   const [creating, setCreating] = useState(false);
+  // 類似会社の警告（409）: null なら非表示
+  const [similarWarning, setSimilarWarning] = useState<SimilarCompanyItem[] | null>(null);
 
   // インライン編集
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -77,12 +79,18 @@ export const CompanyMasterPanel: React.FC = () => {
     return anyErr?.response?.data?.detail || anyErr?.message || '処理に失敗しました';
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCompany.canonical_name.trim()) {
-      setError('会社名を入力してください');
-      return;
+  // 409（類似会社あり）の detail.similar を取り出す。該当しなければ null
+  const extractSimilar = (err: unknown): SimilarCompanyItem[] | null => {
+    const anyErr = err as {
+      response?: { status?: number; data?: { detail?: { similar?: SimilarCompanyItem[] } } };
+    };
+    if (anyErr?.response?.status === 409 && Array.isArray(anyErr.response.data?.detail?.similar)) {
+      return anyErr.response.data!.detail!.similar!;
     }
+    return null;
+  };
+
+  const submitCreate = async (force: boolean) => {
     setCreating(true);
     setError(null);
     setSuccess(null);
@@ -94,15 +102,38 @@ export const CompanyMasterPanel: React.FC = () => {
         address: newCompany.address.trim(),
         department: newCompany.department.trim(),
         taxable: isPurchase ? choiceToTaxable(newCompany.taxable) : null,
+        force,
       });
+      setSimilarWarning(null);
       setSuccess(`「${newCompany.canonical_name.trim()}」を追加しました`);
       setNewCompany(emptyNew);
       await load();
     } catch (err) {
-      setError(extractError(err));
+      const similar = extractSimilar(err);
+      if (similar && !force) {
+        // 似た会社がある → 警告ポップアップで確認してから force=true で再送
+        setSimilarWarning(similar);
+      } else {
+        const anyErr = err as { response?: { data?: { detail?: unknown } } };
+        const detail = anyErr?.response?.data?.detail;
+        setError(
+          typeof detail === 'object' && detail && 'error' in detail
+            ? String((detail as { error: unknown }).error)
+            : extractError(err)
+        );
+      }
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCompany.canonical_name.trim()) {
+      setError('会社名を入力してください');
+      return;
+    }
+    await submitCreate(false);
   };
 
   const startEdit = (c: CompanyMasterItem) => {
@@ -201,6 +232,57 @@ export const CompanyMasterPanel: React.FC = () => {
 
       {error && <Message type="error" className="mb-4">{error}</Message>}
       {success && <Message type="success" className="mb-4">{success}</Message>}
+
+      {/* 類似会社の警告ポップアップ */}
+      {similarWarning && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-5">
+            <h3 className="text-lg font-semibold text-amber-700 mb-2">
+              ⚠ 似た{isPurchase ? '仕入先' : '得意先'}が既に登録されています
+            </h3>
+            <p className="text-sm text-gray-700 mb-3">
+              「{newCompany.canonical_name.trim()}」と似た会社が見つかりました。
+              同じ会社なら追加せず、取込画面で既存の会社を選んでください。
+            </p>
+            <ul className="mb-4 max-h-60 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded">
+              {similarWarning.map((s) => (
+                <li key={s.id} className="px-3 py-2 text-sm">
+                  <div className="font-medium text-gray-800">{s.canonical_name}</div>
+                  {(s.postal_code || s.address) && (
+                    <div className="text-xs text-gray-500">
+                      {s.postal_code && <span>〒{s.postal_code} </span>}
+                      {s.address}
+                    </div>
+                  )}
+                  <div className="text-xs text-amber-700">理由: {s.reasons.join('、')}</div>
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setSimilarWarning(null)}
+                disabled={creating}
+              >
+                追加をやめる
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                loading={creating}
+                onClick={() => submitCreate(true)}
+              >
+                それでも追加する
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 新規追加フォーム */}
       <form onSubmit={handleCreate} className="bg-white rounded-lg shadow p-4 mb-6">

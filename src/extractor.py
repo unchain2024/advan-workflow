@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .claude_extractor import ClaudeExtractor
 from .llm_extractor import LLMExtractor
@@ -68,6 +70,104 @@ def apply_filename_unit_price_override(filename: str, dn: DeliveryNote) -> Deliv
     return dn
 
 
+# ===== 1 PDF 複数伝票の分割 =====
+
+def _norm_slip(slip: Any) -> str:
+    """伝票番号比較用の正規化（全半角・空白・ハイフンの差を吸収）"""
+    s = unicodedata.normalize("NFKC", str(slip or ""))
+    return re.sub(r"[\s\-_]", "", s).upper()
+
+
+def _same_slip(a: str, b: str) -> bool:
+    """同一伝票とみなすか（OCR で末尾に枝番が付くケースは同一扱い）"""
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b) or b.startswith(a)
+
+
+def _page_summary(raw: Any) -> tuple[str, bool]:
+    """ページ単位の生 JSON → (伝票番号, 内容があるか)"""
+    entry = raw
+    if isinstance(raw, list):
+        entry = next((e for e in raw if isinstance(e, dict)), None)
+    if not isinstance(entry, dict):
+        return "", False
+    slip = str(entry.get("slip_number") or "").strip()
+    items = entry.get("items") or []
+    total = entry.get("total") or entry.get("subtotal") or 0
+    has_content = bool(items) or bool(slip) or bool(total)
+    return slip, has_content
+
+
+def extract_notes_by_slip(
+    impl: Any,
+    images: list,
+    filename: Optional[str] = None,
+    max_workers: int = 3,
+) -> list[tuple[DeliveryNote, list[int]]]:
+    """ページ群を伝票番号で区切り、伝票ごとに DeliveryNote を作る
+
+    手順:
+      1. 各ページを個別に抽出して伝票番号を得る（並列）
+      2. 連続ページを伝票番号でグルーピング
+         - 伝票番号が空のページ（続きページ・白紙）は直前のグループに付ける
+         - 伝票番号が変わったら新しいグループ
+      3. グループが 1 つなら PDF 全体を従来どおり 1 回で抽出（既存精度を維持）
+         複数なら、1 ページのグループはページ抽出結果を再利用、
+         複数ページのグループはそのページ群だけをまとめて再抽出
+
+    impl は _extract_raw(images, allow_empty) / _postprocess(raw, filename) /
+    extract_from_images(images, filename) を持つ抽出器。
+    """
+    if len(images) <= 1:
+        return [(impl.extract_from_images(images, filename=filename), list(range(len(images))))]
+
+    def _one(img):
+        try:
+            return impl._extract_raw([img], max_retries=3, allow_empty=True)
+        except Exception as e:  # ページ単位の失敗は「不明ページ」として扱う
+            print(f"    [multi-slip] ページ抽出失敗（グループ再抽出で補う）: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        raws = list(ex.map(_one, images))
+
+    groups: list[dict] = []  # {"slip": str, "pages": [idx], "raws": [raw]}
+    for idx, raw in enumerate(raws):
+        slip, has_content = _page_summary(raw)
+        nslip = _norm_slip(slip)
+        if not groups:
+            groups.append({"slip": nslip, "pages": [idx], "raws": [raw]})
+            continue
+        cur = groups[-1]
+        if nslip and cur["slip"] and not _same_slip(nslip, cur["slip"]):
+            groups.append({"slip": nslip, "pages": [idx], "raws": [raw]})
+        else:
+            if nslip and not cur["slip"]:
+                cur["slip"] = nslip
+            cur["pages"].append(idx)
+            cur["raws"].append(raw)
+
+    summary = " / ".join(
+        f"伝票{g['slip'] or '?'}:p{[p + 1 for p in g['pages']]}" for g in groups
+    )
+    print(f"  [multi-slip] {len(images)}ページ → {len(groups)}伝票 ({summary})")
+
+    if len(groups) == 1:
+        # 従来どおり PDF 全体を 1 回で抽出（複数ページ 1 伝票の既存挙動を維持）
+        return [(impl.extract_from_images(images, filename=filename), list(range(len(images))))]
+
+    results: list[tuple[DeliveryNote, list[int]]] = []
+    for g in groups:
+        pages = g["pages"]
+        if len(pages) == 1 and g["raws"][0]:
+            dn = impl._postprocess(g["raws"][0], filename=filename)
+        else:
+            dn = impl.extract_from_images([images[i] for i in pages], filename=filename)
+        results.append((dn, pages))
+    return results
+
+
 class UnifiedExtractor:
     """ファクトリ + ファイル名後処理を組み込んだ統合抽出器"""
 
@@ -91,10 +191,30 @@ class UnifiedExtractor:
             original_filename: 元のファイル名（ブラウザアップロード時の名前）
                 指定すると @単価判定にこちらを使う。指定しなければ pdf_path.name を使う
         """
-        dn = self._impl.extract(pdf_path)
         target_name = original_filename or pdf_path.name
+        dn = self._impl.extract(pdf_path, filename=target_name)
         dn = apply_filename_unit_price_override(target_name, dn)
         return dn
+
+    def extract_all(
+        self,
+        pdf_path: Path,
+        original_filename: Optional[str] = None,
+    ) -> list[tuple[DeliveryNote, list[int]]]:
+        """PDF 内の伝票を伝票番号単位で分割して抽出（1 PDF 複数伝票対応）
+
+        Returns:
+            [(DeliveryNote, 0-based ページ番号リスト), ...] を PDF 内の出現順で返す。
+            1 ページ / 1 伝票の PDF では extract() と同じ結果が 1 件返る。
+        """
+        target_name = original_filename or pdf_path.name
+        images = self._impl._pdf_to_images(pdf_path)
+        print(f"  PDF → {len(images)} ページの画像に変換 ({self._backend})")
+        notes = extract_notes_by_slip(self._impl, images, filename=target_name)
+        return [
+            (apply_filename_unit_price_override(target_name, dn), pages)
+            for dn, pages in notes
+        ]
 
 
 def extract_delivery_note(
