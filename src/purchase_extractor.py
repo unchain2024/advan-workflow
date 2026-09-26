@@ -37,6 +37,29 @@ class PurchaseInvoice:
         if self.total == 0:
             self.total = self.subtotal + self.tax
 
+    def normalize_amounts(self) -> list[str]:
+        """金額の整合を取る（課税区分確定後に呼ぶ）
+
+        - 小計が 0 で合計だけある場合は 合計 - 消費税 を小計とする
+        - 課税なのに消費税が 0 なら小計の 10% を補完（伝票に税の行が無いケース）
+        - 合計は常に 小計 + 消費税 に揃える（画面で消費税だけ直した場合のズレを防ぐ）
+
+        Returns:
+            適用した補正の説明リスト（ログ用。何もしなければ空）
+        """
+        applied: list[str] = []
+        if self.subtotal == 0 and self.total != 0:
+            self.subtotal = self.total - self.tax
+            applied.append(f"小計を合計から補完: {self.subtotal}")
+        if self.is_taxable and self.tax == 0 and self.subtotal != 0:
+            self.tax = int(self.subtotal * 0.1)  # 負数（返品）は 0 方向に切り捨て
+            applied.append(f"課税で税0 → 10%補完: tax={self.tax}")
+        expected_total = self.subtotal + self.tax
+        if self.total != expected_total:
+            applied.append(f"合計を小計+消費税に補正: {self.total} → {expected_total}")
+            self.total = expected_total
+        return applied
+
 
 # Gemini用の仕入れ抽出プロンプト（配列で返す）
 PURCHASE_EXTRACTION_PROMPT = """

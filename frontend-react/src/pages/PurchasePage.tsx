@@ -4,6 +4,7 @@ import { Button } from '../components/Common/Button';
 import { Message } from '../components/Common/Message';
 import { Spinner } from '../components/Common/Spinner';
 import {
+  getSlipNumberIssues,
   SupplierGroupSection,
   type PurchaseGroup,
 } from '../components/Purchase/SupplierGroupSection';
@@ -147,6 +148,14 @@ export const PurchasePage: React.FC = () => {
       updateGroup(groupIndex, { error: '仕入先名が空です。仕入先名を編集してください。' });
       return;
     }
+    // 伝票番号が空・重複だと DB のキー（仕入先×月×伝票番号）が衝突して上書きされるため保存しない
+    const slipIssues = getSlipNumberIssues(group.invoices);
+    if (slipIssues.size > 0) {
+      updateGroup(groupIndex, {
+        error: '伝票番号が空または重複している伝票があります。伝票番号を入力してから保存してください。',
+      });
+      return;
+    }
 
     updateGroup(groupIndex, { isSaving: true, error: null, showDuplicateDialog: false });
 
@@ -286,9 +295,23 @@ export const PurchasePage: React.FC = () => {
         if (gi !== groupIndex) return g;
         return {
           ...g,
-          invoices: g.invoices.map((inv, ii) =>
-            ii === invoiceIndex ? { ...inv, [field]: value as never } : inv,
-          ),
+          invoices: g.invoices.map((inv, ii) => {
+            if (ii !== invoiceIndex) return inv;
+            const next = { ...inv, [field]: value as never };
+            // 課税区分の切替: 課税にして税0なら10%を補完、非課税にしたら税0
+            if (field === 'is_taxable') {
+              if (value === true && next.tax === 0 && next.subtotal !== 0) {
+                next.tax = Math.trunc(next.subtotal * 0.1);
+              } else if (value === false) {
+                next.tax = 0;
+              }
+            }
+            // 合計は常に 小計 + 消費税（手入力で消費税だけ直してもズレない）
+            if (field === 'subtotal' || field === 'tax' || field === 'is_taxable') {
+              next.total = next.subtotal + next.tax;
+            }
+            return next;
+          }),
         };
       }),
     );

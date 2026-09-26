@@ -34,6 +34,24 @@ export interface PurchaseGroup {
   isMerging?: boolean;
 }
 
+/** 伝票番号の問題を invoice index → 'empty' | 'duplicate' で返す（空・重複は DB で上書きされるため保存不可） */
+export function getSlipNumberIssues(
+  invoices: { slip_number: string }[],
+): Map<number, 'empty' | 'duplicate'> {
+  const issues = new Map<number, 'empty' | 'duplicate'>();
+  const counts = new Map<string, number>();
+  invoices.forEach((inv) => {
+    const s = (inv.slip_number || '').trim();
+    if (s) counts.set(s, (counts.get(s) || 0) + 1);
+  });
+  invoices.forEach((inv, i) => {
+    const s = (inv.slip_number || '').trim();
+    if (!s) issues.set(i, 'empty');
+    else if ((counts.get(s) || 0) > 1) issues.set(i, 'duplicate');
+  });
+  return issues;
+}
+
 interface Props {
   group: PurchaseGroup;
   groupIndex: number;
@@ -75,6 +93,9 @@ export const SupplierGroupSection: React.FC<Props> = ({
   const totalSubtotal = group.invoices.reduce((s, i) => s + i.subtotal, 0);
   const totalTax = group.invoices.reduce((s, i) => s + i.tax, 0);
   const totalAmount = group.invoices.reduce((s, i) => s + i.total, 0);
+  const slipIssues = getSlipNumberIssues(group.invoices);
+  const emptySlipCount = [...slipIssues.values()].filter((v) => v === 'empty').length;
+  const dupSlipCount = [...slipIssues.values()].filter((v) => v === 'duplicate').length;
 
   const isMultiGroup = totalGroups > 1;
 
@@ -302,18 +323,32 @@ export const SupplierGroupSection: React.FC<Props> = ({
                   onChange={(e) =>
                     onUpdateInvoiceField(groupIndex, idx, 'slip_number', e.target.value)
                   }
-                  className="w-full border border-gray-300 rounded px-2 py-1 text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="伝票番号を入力（必須）"
+                  className={`w-full border rounded px-2 py-1 text-gray-800 font-medium focus:outline-none focus:ring-2 ${
+                    slipIssues.has(idx)
+                      ? 'border-red-500 bg-red-50 focus:ring-red-400'
+                      : 'border-gray-300 focus:ring-blue-400'
+                  }`}
                 />
+                {slipIssues.get(idx) === 'empty' && (
+                  <p className="mt-1 text-xs text-red-600">
+                    伝票番号がありません。伝票に番号が無い場合は日付など一意になる番号を入力してください。
+                  </p>
+                )}
+                {slipIssues.get(idx) === 'duplicate' && (
+                  <p className="mt-1 text-xs text-red-600">
+                    同じ伝票番号の伝票がこのグループにあります。別々の番号にしてください。
+                  </p>
+                )}
               </div>
               <div>
-                <label className="text-gray-500 block mb-1">合計:</label>
+                <label className="text-gray-500 block mb-1">合計（小計＋消費税）:</label>
                 <input
                   type="number"
                   value={invoice.total}
-                  onChange={(e) =>
-                    onUpdateInvoiceField(groupIndex, idx, 'total', Number(e.target.value) || 0)
-                  }
-                  className="w-full border border-gray-300 rounded px-2 py-1 text-gray-800 font-medium text-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  readOnly
+                  title="合計は小計と消費税から自動計算されます"
+                  className="w-full border border-gray-200 rounded px-2 py-1 text-gray-800 font-medium text-lg bg-gray-100 cursor-default focus:outline-none"
                 />
               </div>
             </div>
@@ -451,12 +486,21 @@ export const SupplierGroupSection: React.FC<Props> = ({
           <Message type="info" className="mb-4">
             内容を確認後、スプレッドシートに書き込んでください。
           </Message>
+          {slipIssues.size > 0 && (
+            <Message type="error" className="mb-4">
+              伝票番号が{emptySlipCount > 0 ? `空（${emptySlipCount}件）` : ''}
+              {emptySlipCount > 0 && dupSlipCount > 0 ? '・' : ''}
+              {dupSlipCount > 0 ? `重複（${dupSlipCount}件）` : ''}
+              の伝票があります。伝票番号が同じだと保存時に上書きされて1件しか残らないため、
+              各伝票の伝票番号を入力してから保存してください。
+            </Message>
+          )}
           <Button
             onClick={() => onSave(groupIndex, false)}
             variant="primary"
             fullWidth
             loading={group.isSaving}
-            disabled={group.supplierMismatch}
+            disabled={group.supplierMismatch || slipIssues.size > 0}
           >
             このグループをスプレッドシートに書き込む
           </Button>
