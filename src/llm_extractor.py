@@ -12,7 +12,8 @@ from google.genai import types
 from pdf2image import convert_from_path
 from PIL import Image
 
-from .config import GEMINI_API_KEY, GEMINI_MODEL, load_company_config
+from .config import GEMINI_API_KEY, GEMINI_MODEL
+from .company_resolver import resolve_company_name
 from .pdf_extractor import DeliveryItem, DeliveryNote
 
 # LLMに送るプロンプト
@@ -52,6 +53,14 @@ EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情
      * **「アドバンアパレル」「ADVANAPPAREL」を含む会社名は絶対に除外**（これは自社名です）
    - company_name から「御中」「様」「殿」は除去すること
    - **必須**: company_name は決して空文字 ("") にしない。書類上に明らかに会社名が見える限り、必ず抽出する
+
+2-b. **company_candidates**: 書類上に見える**会社名らしきものをすべて**列挙した配列
+   - 宛先、発行元、「仕入先名」「納品先」などの欄の会社名、ブランド名、社判・ロゴの社名など、**自社（アドバン系）も含めて漏れなく**挙げること
+   - 各要素は `{"name": 会社名, "role": 役割, "confidence": 0〜1}` の形式
+   - role は次のいずれか: `"宛先"`（御中・様が付く受取先）, `"発行元"`（差出人・社判・下部の社名）, `"仕入先欄"`（「仕入先名」「納入業者」などの欄）, `"ブランド"`（ブランド名・屋号）, `"その他"`
+   - confidence はその name が**取引先（相手会社）である**確からしさ（自社名なら低く）
+   - name から「御中」「様」「殿」は除去し、法人格（CO.,LTD・株式会社 等）はそのまま残す
+   - 会社名が 1 つしか見えない場合も、その 1 件を配列で返す
 
 3. **slip_number**: 伝票番号または納品書番号
    - 「納品伝票番号」「伝票番号」などのラベルの後の番号
@@ -114,6 +123,10 @@ EXTRACTION_PROMPT = """以下は納品書の画像です。この画像から情
 {
   "date": "2024/10/15",
   "company_name": "株式会社サンプル",
+  "company_candidates": [
+    {"name": "株式会社サンプル", "role": "宛先", "confidence": 0.9},
+    {"name": "アドバンアパレル株式会社", "role": "発行元", "confidence": 0.05}
+  ],
   "slip_number": "D-12345",
   "subtotal": 100000,
   "tax": 10000,
@@ -153,46 +166,61 @@ class LLMExtractor:
         # Gemini Client作成
         self.gemini_client = genai.Client(api_key=self.api_key)
 
-    def extract(self, pdf_path: Path) -> DeliveryNote:
-        """PDFから納品書データを抽出
-
-        Args:
-            pdf_path: 納品書PDFのパス
-
-        Returns:
-            DeliveryNote: 抽出された納品書データ
-        """
-        # PDFを画像に変換
+    def extract(self, pdf_path: Path, filename: Optional[str] = None) -> DeliveryNote:
+        """PDF 全体を 1 枚の納品書として抽出（従来動作）"""
         images = self._pdf_to_images(pdf_path)
         print(f"  PDF → {len(images)} ページの画像に変換")
+        return self.extract_from_images(images, filename=filename)
 
-        # Geminiに直接画像を送信して構造化抽出（リトライ付き）
-        max_retries = 6
+    def extract_from_images(
+        self, images: list[Image.Image], filename: Optional[str] = None
+    ) -> DeliveryNote:
+        """画像リスト（= 1 伝票分のページ群）から DeliveryNote を抽出"""
+        raw = self._extract_raw(images)
+        return self._postprocess(raw, filename=filename)
+
+    def _extract_raw(
+        self, images: list[Image.Image], max_retries: int = 6, allow_empty: bool = False
+    ):
+        """Gemini に画像を送り、生 JSON（dict または list）を返す（リトライ付き）"""
         extracted = None
         for attempt in range(1, max_retries + 1):
-            print(f"\n=== Gemini APIに画像を直接送信中 (試行 {attempt}/{max_retries}) ===")
+            print(
+                f"\n=== Gemini APIに画像を直接送信中 "
+                f"({len(images)}ページ, 試行 {attempt}/{max_retries}) ==="
+            )
             extracted = self._extract_with_gemini(images)
-            if extracted is not None:
+            ok = extracted is not None if allow_empty else bool(extracted)
+            if ok:
                 print(f"Gemini応答: {extracted}")
                 break
             print(f"  ⚠️ 試行 {attempt} 失敗、{'リトライします...' if attempt < max_retries else '全試行失敗'}")
 
-        if not extracted:
+        if extracted is None or (not allow_empty and not extracted):
             raise ValueError(f"データの抽出に失敗しました（{max_retries}回リトライ後）")
+        return extracted
 
+    def _postprocess(self, extracted, filename: Optional[str] = None) -> DeliveryNote:
+        """生 JSON → 日付検証・会社名解決 → DeliveryNote"""
         # Geminiがリスト（複数納品書）を返した場合、1つにマージ
         if isinstance(extracted, list):
             print(f"  ⚠️ Geminiがリスト({len(extracted)}件)を返却 → 1件にマージ")
-            merged = extracted[0] if extracted else {}
+            merged = dict(extracted[0]) if extracted else {}
             all_items = []
+            all_candidates = []
             for entry in extracted:
-                all_items.extend(entry.get("items", []))
-                # 最初のエントリに無い値を後続から補完
+                if not isinstance(entry, dict):
+                    continue
+                all_items.extend(entry.get("items", []) or [])
+                all_candidates.extend(entry.get("company_candidates", []) or [])
                 for key in ["date", "company_name", "slip_number", "subtotal", "tax", "total", "payment_received"]:
                     if not merged.get(key) and entry.get(key):
                         merged[key] = entry[key]
             merged["items"] = all_items
+            merged["company_candidates"] = all_candidates
             extracted = merged
+        if not isinstance(extracted, dict):
+            extracted = {}
 
         # 日付の検証（YYYY/MM/DD形式のみ許可）
         date_str = extracted.get("date", "")
@@ -201,10 +229,8 @@ class LLMExtractor:
 
         if date_str:
             print(f"  抽出された日付: {date_str}")
-            # YYYY/MM/DD形式かチェック
             if not re.match(date_pattern, date_str):
                 print(f"  ⚠️ 警告: 無効な日付形式を検出: '{date_str}' → null に設定")
-                print(f"  正しい形式: YYYY/MM/DD (例: 2025/03/15)")
                 date_str = None
             else:
                 print(f"  ✓ 日付検証OK: {date_str}")
@@ -212,42 +238,11 @@ class LLMExtractor:
             print(f"  ⚠️ 警告: 日付が抽出されませんでした")
             date_str = None
 
-        # 会社名のフィルタリング（自社名を除外）
-        company_name = extracted.get("company_name", "")
-        if company_name:
-            # 自社名と比較
-            own_company = load_company_config()
-            own_company_name = own_company.get("company_name", "")
+        # 会社名解決（自社名除外 + マスタ一致/役割/確信度でスコアリング）
+        company_name, _ = resolve_company_name(extracted, domain="sales", filename=filename)
 
-            if own_company_name:
-                # 正規化して比較（法人格を除去）
-                def normalize_for_filtering(name: str) -> str:
-                    """フィルタリング用に会社名を正規化（法人格等を除去）"""
-                    import re
-                    # 法人格を除去（日本語）
-                    name = re.sub(r'株式会社|有限会社|合同会社|合資会社|合名会社', '', name)
-                    # 法人格を除去（英語）
-                    name = re.sub(r'\bCO\.?\s*,?\s*LTD\.?\b|\bINC\.?\b|\bCORP\.?\b', '', name, flags=re.IGNORECASE)
-                    # 敬称を除去
-                    name = re.sub(r'御中|様|殿', '', name)
-                    # 空白・ピリオド・カンマを除去
-                    name = name.replace(' ', '').replace('　', '').replace('.', '').replace(',', '')
-                    return name.strip().upper()
-
-                normalized_own = normalize_for_filtering(own_company_name)
-                normalized_extracted = normalize_for_filtering(company_name)
-
-                # 双方向チェック：どちらかが他方に含まれている場合は除外
-                if (normalized_own and normalized_extracted and
-                    (normalized_own in normalized_extracted or
-                     normalized_extracted in normalized_own)):
-                    print(f"警告: 自社名が会社名として検出されました: {company_name}")
-                    print(f"  正規化後: 自社名='{normalized_own}' vs 抽出='{normalized_extracted}'")
-                    company_name = ""  # 空にする
-
-        # データを整形
         merged_data = {
-            "date": date_str or "",  # 検証済みの日付を使用
+            "date": date_str or "",
             "company_name": company_name,
             "slip_number": extracted.get("slip_number") or "",
             "subtotal": extracted.get("subtotal", 0),
@@ -256,9 +251,7 @@ class LLMExtractor:
             "payment_received": extracted.get("payment_received", 0),
             "is_return": extracted.get("is_return", False),
         }
-        all_items = extracted.get("items", [])
-
-        # DeliveryNoteオブジェクトに変換
+        all_items = extracted.get("items", []) or []
         return self._to_delivery_note(merged_data, all_items)
 
     def _pdf_to_images(self, pdf_path: Path) -> list[Image.Image]:

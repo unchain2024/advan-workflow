@@ -75,8 +75,18 @@ r = client.post("/api/company-master", json={
 check("POST 追加 200", r.status_code == 200, str(r.status_code))
 new_id = r.json().get("id")
 
+r = client.post("/api/company-master", json={"domain": "sales", "canonical_name": "テスト商事㈱"})
+check("同名(有効)を400で弾く", r.status_code == 400, str(r.status_code))
+
 r = client.post("/api/company-master", json={"domain": "sales", "canonical_name": "株式会社テスト商事"})
-check("重複(表記ゆれ)を400で弾く", r.status_code == 400, str(r.status_code))
+check("表記ゆれは409で警告", r.status_code == 409, str(r.status_code))
+sim = r.json().get("detail", {}).get("similar", []) if r.status_code == 409 else []
+check("409 に類似会社が入る", any(x["canonical_name"] == "テスト商事㈱" for x in sim), str(sim))
+
+r = client.post("/api/company-master", json={"domain": "sales", "canonical_name": "株式会社テスト商事", "force": True})
+check("force=True なら追加できる", r.status_code == 200, str(r.status_code))
+forced_id = r.json().get("id")
+client.delete(f"/api/company-master/{forced_id}")
 
 r = client.post("/api/company-master", json={"domain": "purchase", "canonical_name": "テスト仕入㈱", "taxable": False})
 check("仕入 taxable=False で追加", r.status_code == 200 and r.json()["taxable"] is False)

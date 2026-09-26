@@ -74,6 +74,14 @@ class ProcessPDFResponse(BaseModel):
     company_matched: bool = True
     sheet_company_candidates: list[str] = []
     suggested_company_candidates: list[str] = []
+    # 1 PDF 複数伝票: 2 件目以降の伝票（先頭伝票がレスポンス本体）
+    additional_results: list["ProcessPDFResponse"] = []
+    # この伝票が元 PDF の何ページ目か（1-based）
+    page_numbers: list[int] = []
+    source_filename: str = ""
+
+
+ProcessPDFResponse.model_rebuild()
 
 
 class RegenerateInvoiceRequest(BaseModel):
@@ -165,6 +173,194 @@ def extract_year_month(date_str: str) -> str:
     return datetime.now().strftime("%Y-%m")
 
 
+def _split_pdf_pages(src_pdf: Path, pages: list[int], dest: Path) -> bool:
+    """PDF から指定ページ（0-based）だけを取り出して dest に書く。失敗時 False"""
+    try:
+        from pypdf import PdfReader, PdfWriter
+
+        reader = PdfReader(str(src_pdf))
+        writer = PdfWriter()
+        for i in pages:
+            if 0 <= i < len(reader.pages):
+                writer.add_page(reader.pages[i])
+        with open(dest, "wb") as f:
+            writer.write(f)
+        return True
+    except Exception as e:
+        print(f"  [multi-slip] ページ分割に失敗（PDF全体を使用）: {e}")
+        return False
+
+
+def _build_process_result(
+    delivery_note: DeliveryNote,
+    pages: list[int],
+    tmp_path: Path,
+    original_filename: str,
+    sales_person: str,
+    year: Optional[int],
+    month: Optional[int],
+    company_name_override: str,
+    split_pdf: bool,
+) -> ProcessPDFResponse:
+    """1 伝票分の DeliveryNote → 会社名正規化・PDF保存・請求書生成 → レスポンス"""
+
+    # バッチ内で統一された会社名を使用（LLM抽出のばらつきを防ぐ）
+    effective_company_name = (
+        company_name_override.strip() if company_name_override.strip() else delivery_note.company_name
+    )
+
+    # 1.5. 会社名を canonical 名に統一
+    target_year = year if year else None
+    if not target_year and delivery_note.date:
+        try:
+            target_year = int(delivery_note.date.split('/')[0])
+        except (ValueError, IndexError):
+            pass
+    # Phase 4: filename ヒントを渡して親/子 disambiguation を有効化
+    # （例: 'アダストリア' + 'アダストリアHARE_岡部.pdf' → HARE事業部）
+    canonical_name = (
+        sheets_client.get_canonical_company_name(
+            effective_company_name,
+            year=target_year,
+            filename=original_filename,
+        )
+        if effective_company_name
+        else None
+    )
+    company_matched = True
+    sheet_company_candidates = []
+    suggested_company_candidates = []
+    if canonical_name:
+        if canonical_name != effective_company_name:
+            print(f"  会社名を正規化: '{effective_company_name}' → '{canonical_name}'")
+        effective_company_name = canonical_name
+    else:
+        # マッチしなかった（会社名が空の場合も含む）→ canonical 候補を返してピッカーへ
+        company_matched = False
+        sheet_company_candidates = list_canonicals("sales")
+        filename_keywords = _extract_filename_keywords(original_filename or "")
+        scored = [
+            (name, _score_company_candidate(name, effective_company_name, filename_keywords))
+            for name in sheet_company_candidates
+        ]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        suggested_company_candidates = [name for name, s in scored if s > 0]
+        sheet_company_candidates = [name for name, _ in scored]
+        print(f"  会社名マッチなし: '{effective_company_name}' (file: {original_filename})")
+        print(f"  キーワード: {filename_keywords}, 類似候補: {[(n, s) for n, s in scored if s > 0]}")
+    delivery_note.company_name = effective_company_name
+
+    # 2. 納品書PDFをoutputディレクトリに保存
+    output_dir = Path(__file__).parent.parent.parent / "output"
+    output_dir.mkdir(exist_ok=True)
+
+    safe_company_name = delivery_note.company_name.replace("/", "_").replace("\\", "_")
+    date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
+    slip_id = (
+        delivery_note.slip_number.replace("/", "_").replace("\\", "_")
+        if delivery_note.slip_number
+        else str(int(time.time()))
+    )
+    delivery_filename = f"delivery_{safe_company_name}_{date_str}_{slip_id}.pdf"
+    delivery_path = output_dir / delivery_filename
+
+    # 納品書PDFをコピー（複数伝票 PDF は該当ページだけ切り出す）
+    if not (split_pdf and _split_pdf_pages(tmp_path, pages, delivery_path)):
+        shutil.copy(tmp_path, delivery_path)
+
+    # 3. 会社情報取得（正規化済みの会社名で検索）
+    company_info = sheets_client.get_company_info(effective_company_name)
+
+    # 4. 前月の請求情報を取得（ユーザー指定の年月を優先）
+    if year and month:
+        year_month = f"{year}-{int(month):02d}"
+    else:
+        year_month = extract_year_month(delivery_note.date)
+    previous_billing = sheets_client.get_previous_billing(
+        effective_company_name, year_month
+    )
+
+    # 5. 単一納品書で請求書PDF生成（DB保存は「書き込む」ボタン時に行う）
+    invoice_generator = InvoiceGenerator()
+    slip_id_safe = (
+        delivery_note.slip_number.replace("/", "_").replace("\\", "_")
+        if delivery_note.slip_number
+        else ""
+    )
+    invoice_filename = f"invoice_{safe_company_name}_{date_str}_{slip_id_safe}.pdf"
+    invoice_path = output_dir / invoice_filename
+
+    # 古いPDFを削除（再生成のため）
+    if invoice_path.exists():
+        invoice_path.unlink()
+
+    invoice_generator.generate(
+        delivery_note=delivery_note,
+        company_info=company_info,
+        previous_billing=previous_billing,
+        output_path=invoice_path,
+    )
+
+    # レスポンス作成（キャッシュバスティング用にタイムスタンプ追加）
+    timestamp = int(time.time())
+    invoice_url = f"/output/{invoice_filename}?t={timestamp}"
+    delivery_pdf_url = f"/output/{delivery_filename}?t={timestamp}"
+
+    return ProcessPDFResponse(
+        delivery_note=DeliveryNoteResponse(
+            date=delivery_note.date,
+            company_name=delivery_note.company_name,
+            slip_number=delivery_note.slip_number,
+            items=[
+                DeliveryItemResponse(
+                    slip_number=item.slip_number,
+                    product_code=item.product_code,
+                    product_name=item.product_name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    amount=item.amount,
+                )
+                for item in delivery_note.items
+            ],
+            subtotal=delivery_note.subtotal,
+            tax=delivery_note.tax,
+            total=delivery_note.total,
+            payment_received=delivery_note.payment_received,
+        ),
+        company_info=(
+            CompanyInfoResponse(
+                company_name=company_info.company_name,
+                postal_code=company_info.postal_code,
+                address=company_info.address,
+                department=company_info.department,
+            )
+            if company_info
+            else None
+        ),
+        previous_billing=PreviousBillingResponse(
+            previous_amount=previous_billing.previous_amount,
+            payment_received=previous_billing.payment_received,
+            carried_over=previous_billing.carried_over,
+            sales_amount=previous_billing.sales_amount or 0,
+            tax_amount=previous_billing.tax_amount or 0,
+            current_amount=previous_billing.current_amount or 0,
+        ),
+        invoice_url=invoice_url,
+        delivery_pdf_url=delivery_pdf_url,
+        year_month=year_month,
+        sales_person=sales_person,
+        cumulative_subtotal=delivery_note.subtotal,
+        cumulative_tax=delivery_note.tax,
+        cumulative_total=delivery_note.total,
+        cumulative_items_count=len(delivery_note.items),
+        company_matched=company_matched,
+        sheet_company_candidates=sheet_company_candidates,
+        suggested_company_candidates=suggested_company_candidates,
+        page_numbers=[p + 1 for p in pages],
+        source_filename=original_filename or "",
+    )
+
+
 @router.post("/process-pdf", response_model=ProcessPDFResponse)
 async def process_pdf(
     file: UploadFile = File(...),
@@ -174,7 +370,13 @@ async def process_pdf(
     reset_existing: bool = Form(False),
     company_name_override: str = Form(""),
 ):
-    """納品書PDFを処理して請求書を生成"""
+    """納品書PDFを処理して請求書を生成
+
+    1 つの PDF に複数の伝票が含まれる場合は伝票番号単位で分割し、
+    先頭伝票をレスポンス本体、2 件目以降を additional_results に入れて返す。
+    会社名が抽出できない／マスタに一致しない伝票は company_matched=False で返し、
+    フロントの会社ピッカーで選択させる。
+    """
 
     # ファイル形式チェック
     if not file.filename.endswith('.pdf'):
@@ -187,162 +389,39 @@ async def process_pdf(
         tmp_path = Path(tmp_file.name)
 
     try:
-        # 1. PDF抽出 (バックエンドはEXTRACTOR_BACKEND env で切替可能。既定: claude)
+        # 1. PDF抽出（伝票単位に分割。バックエンドは EXTRACTOR_BACKEND env で切替可能。既定: claude）
         extractor = UnifiedExtractor()
-        delivery_note = extractor.extract(tmp_path, original_filename=file.filename)
-
-        # 会社名がNoneの場合はエラーを返す
-        if not delivery_note.company_name:
+        extracted = extractor.extract_all(tmp_path, original_filename=file.filename)
+        if not extracted:
             raise HTTPException(
                 status_code=400,
-                detail={"error": "会社名を抽出できませんでした。PDFの内容を確認してください。"}
+                detail={"error": "納品書を抽出できませんでした。PDFの内容を確認してください。"}
             )
 
-        # バッチ内で統一された会社名を使用（LLM抽出のばらつきを防ぐ）
-        effective_company_name = company_name_override.strip() if company_name_override.strip() else delivery_note.company_name
+        split_pdf = len(extracted) > 1
+        if split_pdf:
+            print(f"  [multi-slip] {file.filename}: {len(extracted)} 伝票に分割")
 
-        # 1.5. 会社名をスプレッドシートの正規名に統一
-        target_year = year if year else None
-        if not target_year and delivery_note.date:
-            try:
-                target_year = int(delivery_note.date.split('/')[0])
-            except (ValueError, IndexError):
-                pass
-        # Phase 4: filename ヒントを渡して親/子 disambiguation を有効化
-        # （例: 'アダストリア' + 'アダストリアHARE_岡部.pdf' → HARE事業部）
-        canonical_name = sheets_client.get_canonical_company_name(
-            effective_company_name,
-            year=target_year,
-            filename=file.filename,
-        )
-        company_matched = True
-        sheet_company_candidates = []
-        suggested_company_candidates = []
-        if canonical_name:
-            if canonical_name != effective_company_name:
-                print(f"  会社名を正規化: '{effective_company_name}' → '{canonical_name}'")
-            effective_company_name = canonical_name
-        else:
-            # マッチしなかった場合、canonical 会社名リストから候補を返す
-            # （Phase 1: シート読込みを廃止、ハードコード canonical を真値とする）
-            company_matched = False
-            sheet_company_candidates = list_canonicals("sales")
-            # ファイル名＋抽出会社名からキーワードを抽出してスコアリング
-            filename_keywords = _extract_filename_keywords(file.filename or "")
-            scored = [
-                (name, _score_company_candidate(name, effective_company_name, filename_keywords))
-                for name in sheet_company_candidates
-            ]
-            scored.sort(key=lambda x: x[1], reverse=True)
-            suggested_company_candidates = [name for name, s in scored if s > 0]
-            sheet_company_candidates = [name for name, _ in scored]
-            print(f"  会社名マッチなし: '{effective_company_name}' (file: {file.filename})")
-            print(f"  キーワード: {filename_keywords}, 類似候補: {[(n, s) for n, s in scored if s > 0]}")
-        delivery_note.company_name = effective_company_name
+        results = [
+            _build_process_result(
+                delivery_note=dn,
+                pages=pages,
+                tmp_path=tmp_path,
+                original_filename=file.filename or "",
+                sales_person=sales_person,
+                year=year,
+                month=month,
+                company_name_override=company_name_override,
+                split_pdf=split_pdf,
+            )
+            for dn, pages in extracted
+        ]
+        first = results[0]
+        first.additional_results = results[1:]
+        return first
 
-        # 2. 納品書PDFをoutputディレクトリに保存
-        output_dir = Path(__file__).parent.parent.parent / "output"
-        output_dir.mkdir(exist_ok=True)
-
-        safe_company_name = delivery_note.company_name.replace("/", "_").replace("\\", "_")
-        date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
-        slip_id = delivery_note.slip_number.replace("/", "_").replace("\\", "_") if delivery_note.slip_number else str(int(time.time()))
-        delivery_filename = f"delivery_{safe_company_name}_{date_str}_{slip_id}.pdf"
-        delivery_path = output_dir / delivery_filename
-
-        # 納品書PDFをコピー
-        shutil.copy(tmp_path, delivery_path)
-
-        # 3. 会社情報取得（正規化済みの会社名で検索）
-        company_info = sheets_client.get_company_info(effective_company_name)
-
-        # 4. 前月の請求情報を取得（ユーザー指定の年月を優先）
-        if year and month:
-            year_month = f"{year}-{int(month):02d}"
-        else:
-            year_month = extract_year_month(delivery_note.date)
-        previous_billing = sheets_client.get_previous_billing(
-            effective_company_name, year_month
-        )
-
-        # 5. 単一納品書で請求書PDF生成（DB保存は「書き込む」ボタン時に行う）
-        invoice_generator = InvoiceGenerator()
-
-        safe_company_name = effective_company_name.replace("/", "_").replace("\\", "_")
-
-        date_str = delivery_note.date.replace("/", "") if delivery_note.date else ""
-        slip_id_safe = delivery_note.slip_number.replace("/", "_").replace("\\", "_") if delivery_note.slip_number else ""
-        invoice_filename = f"invoice_{safe_company_name}_{date_str}_{slip_id_safe}.pdf"
-        invoice_path = output_dir / invoice_filename
-
-        # 古いPDFを削除（再生成のため）
-        if invoice_path.exists():
-            invoice_path.unlink()
-
-        invoice_generator.generate(
-            delivery_note=delivery_note,
-            company_info=company_info,
-            previous_billing=previous_billing,
-            output_path=invoice_path,
-        )
-
-        # レスポンス作成（キャッシュバスティング用にタイムスタンプ追加）
-        timestamp = int(time.time())
-        invoice_url = f"/output/{invoice_filename}?t={timestamp}"
-        delivery_pdf_url = f"/output/{delivery_filename}?t={timestamp}"
-
-        return ProcessPDFResponse(
-            delivery_note=DeliveryNoteResponse(
-                date=delivery_note.date,
-                company_name=delivery_note.company_name,
-                slip_number=delivery_note.slip_number,
-                items=[
-                    DeliveryItemResponse(
-                        slip_number=item.slip_number,
-                        product_code=item.product_code,
-                        product_name=item.product_name,
-                        quantity=item.quantity,
-                        unit_price=item.unit_price,
-                        amount=item.amount,
-                    )
-                    for item in delivery_note.items
-                ],
-                subtotal=delivery_note.subtotal,
-                tax=delivery_note.tax,
-                total=delivery_note.total,
-                payment_received=delivery_note.payment_received,
-            ),
-            company_info=(
-                CompanyInfoResponse(
-                    company_name=company_info.company_name,
-                    postal_code=company_info.postal_code,
-                    address=company_info.address,
-                    department=company_info.department,
-                )
-                if company_info
-                else None
-            ),
-            previous_billing=PreviousBillingResponse(
-                previous_amount=previous_billing.previous_amount,
-                payment_received=previous_billing.payment_received,
-                carried_over=previous_billing.carried_over,
-                sales_amount=previous_billing.sales_amount or 0,
-                tax_amount=previous_billing.tax_amount or 0,
-                current_amount=previous_billing.current_amount or 0,
-            ),
-            invoice_url=invoice_url,
-            delivery_pdf_url=delivery_pdf_url,
-            year_month=year_month,
-            sales_person=sales_person,
-            cumulative_subtotal=delivery_note.subtotal,
-            cumulative_tax=delivery_note.tax,
-            cumulative_total=delivery_note.total,
-            cumulative_items_count=len(delivery_note.items),
-            company_matched=company_matched,
-            sheet_company_candidates=sheet_company_candidates,
-            suggested_company_candidates=suggested_company_candidates,
-        )
-
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         error_detail = {

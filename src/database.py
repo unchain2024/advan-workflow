@@ -10,6 +10,17 @@ from .config import DATABASE_PATH, DATA_DIR
 from .pdf_extractor import DeliveryNote, DeliveryItem
 from .purchase_extractor import PurchaseInvoice, PurchaseItem
 from .sheets_client import normalize_company_name, match_company_name
+from .company_resolver import normalize_for_similarity
+
+
+class SimilarCompanyError(ValueError):
+    """追加しようとした会社に似た会社が既に有効なマスタにある（警告用）"""
+
+    def __init__(self, canonical_name: str, similar: list[dict]):
+        self.canonical_name = canonical_name
+        self.similar = similar
+        names = "、".join(s["canonical_name"] for s in similar)
+        super().__init__(f"似た会社が既に登録されています: {names}")
 
 
 class MonthlyItemsDB:
@@ -1065,6 +1076,61 @@ class MonthlyItemsDB:
             row = cursor.fetchone()
             return self._company_row_to_dict(row) if row else None
 
+    # ----- 類似会社の検出（追加時の重複警告） -----
+
+    @staticmethod
+    def _norm_postal(postal: str) -> str:
+        import re as _re
+        import unicodedata as _ud
+        s = _ud.normalize("NFKC", str(postal or ""))
+        return _re.sub(r"[〒\s\-‐－]", "", s)
+
+    @staticmethod
+    def _norm_address(address: str) -> str:
+        import re as _re
+        import unicodedata as _ud
+        s = _ud.normalize("NFKC", str(address or ""))
+        return _re.sub(r"[\s\-‐－ー丁目番地号]", "", s).upper()
+
+    def find_similar_companies(
+        self,
+        domain: str,
+        canonical_name: str,
+        postal_code: str = "",
+        address: str = "",
+        exclude_id: Optional[int] = None,
+    ) -> list[dict]:
+        """有効な会社の中から、追加しようとしている会社と似たものを返す
+
+        判定条件（いずれか）:
+          - 包含: 法人格・記号・空白を除いた正規化名で、片方がもう片方を含む
+                  （完全一致も含む。短い側は 3 文字以上。gf.A のような短い社名も拾う）
+          - 郵便番号一致 / 住所一致（双方が空でないとき）
+        無効化済み(is_active=0)の会社は対象外。
+        戻り値の各要素は会社情報 + "reasons": [理由...]
+        """
+        target = normalize_for_similarity(canonical_name)
+        target_postal = self._norm_postal(postal_code)
+        target_addr = self._norm_address(address)
+        out: list[dict] = []
+        for c in self.list_companies(domain, include_inactive=False):
+            if exclude_id is not None and c["id"] == exclude_id:
+                continue
+            reasons: list[str] = []
+            other = normalize_for_similarity(c["canonical_name"])
+            if target and other:
+                if target == other:
+                    reasons.append("会社名が実質同じ")
+                elif min(len(target), len(other)) >= 3 and (target in other or other in target):
+                    reasons.append("会社名を含む/含まれる")
+            if target_postal and target_postal == self._norm_postal(c["postal_code"]):
+                reasons.append("郵便番号が同じ")
+            if target_addr and target_addr == self._norm_address(c["address"]):
+                reasons.append("住所が同じ")
+            if reasons:
+                out.append({**c, "reasons": reasons})
+        return out
+
     def add_company(
         self,
         domain: str,
@@ -1073,21 +1139,42 @@ class MonthlyItemsDB:
         address: str = "",
         department: str = "",
         taxable: Optional[bool] = None,
+        force: bool = False,
     ) -> dict:
-        """得意先/仕入先を追加。表記ゆれ重複(normalize 一致)は ValueError"""
+        """得意先/仕入先を追加
+
+        - 有効な同名があれば ValueError（追加不可）
+        - 無効化済みの同名があれば、その行を再有効化して内容を更新（新規行は作らない）
+        - 類似会社（包含 / 郵便番号 / 住所）が有効な中にあり force=False なら
+          SimilarCompanyError（フロントで警告 → force=True で再送）
+        無効化済みの会社は重複・類似の判定対象に含めない。
+        """
         canonical_name = (canonical_name or "").strip()
         if not canonical_name:
             raise ValueError("会社名が空です")
 
-        # 正規化ベースの重複チェック（既存の有効/無効すべてと比較）
-        target_norm = normalize_company_name(canonical_name)
+        inactive_same: Optional[dict] = None
         for existing in self.list_companies(domain, include_inactive=True):
             if existing["canonical_name"] == canonical_name:
-                raise ValueError(f"既に登録済みです: {canonical_name}")
-            if target_norm and normalize_company_name(existing["canonical_name"]) == target_norm:
-                raise ValueError(
-                    f"表記ゆれの可能性があります（既存: {existing['canonical_name']}）"
-                )
+                if existing["is_active"]:
+                    raise ValueError(f"既に登録済みです: {canonical_name}")
+                inactive_same = existing
+
+        if inactive_same is not None:
+            print(f"    company_master: 無効化済みの同名を再有効化: {canonical_name}")
+            return self.update_company(
+                inactive_same["id"],
+                postal_code=postal_code,
+                address=address,
+                department=department,
+                taxable=taxable,
+                set_taxable=True,
+                is_active=True,
+            )
+
+        similar = self.find_similar_companies(domain, canonical_name, postal_code, address)
+        if similar and not force:
+            raise SimilarCompanyError(canonical_name, similar)
 
         current_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
         taxable_val = None if taxable is None else (1 if taxable else 0)

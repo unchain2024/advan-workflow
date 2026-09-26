@@ -53,7 +53,8 @@ function groupResults(results: ProcessPDFResponse[]): CompanyGroup[] {
         extractedCompanyName: r.delivery_note.company_name,
         companyCandidates: r.sheet_company_candidates || [],
         suggestedCandidates: r.suggested_company_candidates || [],
-        showAllCandidates: false,
+        // 類似候補が無いときは最初から全件を開く（選ぶ会社に気づけないのを防ぐ）
+        showAllCandidates: (r.suggested_company_candidates || []).length === 0,
         isSaved: false,
         showEditForm: false,
         editingNoteIndex: 0,
@@ -166,7 +167,8 @@ export const UploadPage: React.FC = () => {
             setProgressMessage(msg);
           }
         );
-        results.push(result);
+        // 1 PDF に複数伝票が入っていた場合は 2 件目以降も展開する
+        results.push(result, ...(result.additional_results || []));
       }
 
       const newGroups = groupResults(results);

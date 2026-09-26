@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from src.database import MonthlyItemsDB
+from src.database import MonthlyItemsDB, SimilarCompanyError
 
 router = APIRouter()
 
@@ -38,6 +38,16 @@ class CreateCompanyRequest(BaseModel):
     address: str = ""
     department: str = ""
     taxable: Optional[bool] = None
+    # 類似会社の警告（409）を確認済みで、それでも追加する場合 True
+    force: bool = False
+
+
+class SimilarCompanyItem(BaseModel):
+    id: int
+    canonical_name: str
+    postal_code: str
+    address: str
+    reasons: list[str]
 
 
 class UpdateCompanyRequest(BaseModel):
@@ -74,7 +84,7 @@ async def list_company_master(domain: str, include_inactive: bool = False):
 
 @router.post("/company-master", response_model=CompanyMasterItem)
 async def create_company_master(request: CreateCompanyRequest):
-    """得意先/仕入先を追加"""
+    """得意先/仕入先を追加（類似会社があれば 409 で警告、force=True で強行）"""
     _validate_domain(request.domain)
     try:
         db = MonthlyItemsDB()
@@ -85,8 +95,27 @@ async def create_company_master(request: CreateCompanyRequest):
             address=request.address,
             department=request.department,
             taxable=request.taxable,
+            force=request.force,
         )
         return CompanyMasterItem(**created)
+    except SimilarCompanyError as e:
+        # 類似会社あり → 409 で候補を返す（フロントで警告 → force=True で再送）
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": str(e),
+                "similar": [
+                    SimilarCompanyItem(
+                        id=s["id"],
+                        canonical_name=s["canonical_name"],
+                        postal_code=s["postal_code"],
+                        address=s["address"],
+                        reasons=s["reasons"],
+                    ).model_dump()
+                    for s in e.similar
+                ],
+            },
+        )
     except ValueError as e:
         # 重複・表記ゆれ・空名は 400（業務エラー）
         raise HTTPException(status_code=400, detail=str(e))
