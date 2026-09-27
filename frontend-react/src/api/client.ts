@@ -28,6 +28,7 @@ import type {
   CompanyMasterItem,
   CreateCompanyRequest,
   UpdateCompanyRequest,
+  PurchaseCompanyTermsResponse,
 } from '../types';
 
 // 本番環境ではVITE_API_URLを使用、開発環境では/api（Viteプロキシ経由）
@@ -240,6 +241,15 @@ export const getPurchaseMonthly = async (
 ): Promise<{ items: PurchaseMonthlyItem[] }> => {
   const response = await apiClient.get<{ items: PurchaseMonthlyItem[] }>('/purchase-monthly', {
     params: { company_name: companyName, year_month: yearMonth, sales_person: salesPerson },
+  });
+  return response.data;
+};
+
+export const getPurchaseCompanyTerms = async (
+  companyName: string
+): Promise<PurchaseCompanyTermsResponse> => {
+  const response = await apiClient.get<PurchaseCompanyTermsResponse>('/purchase-company-terms', {
+    params: { company_name: companyName },
   });
   return response.data;
 };

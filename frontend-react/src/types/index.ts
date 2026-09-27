@@ -56,6 +56,10 @@ export interface CompanyMasterItem {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  /** 締め日: "" (未設定=月末) | "月末" | "N日" */
+  closing_day: string;
+  /** 支払日: "" (未設定) | "翌月末" | "翌月10日" など */
+  payment_day: string;
 }
 
 export interface CreateCompanyRequest {
@@ -67,6 +71,8 @@ export interface CreateCompanyRequest {
   taxable?: boolean | null;
   /** 類似会社の警告(409)を確認済みで、それでも追加する場合 true */
   force?: boolean;
+  closing_day?: string;
+  payment_day?: string;
 }
 
 /** 追加時に見つかった類似会社（409 レスポンスの detail.similar） */
@@ -85,6 +91,8 @@ export interface UpdateCompanyRequest {
   taxable?: boolean | null;
   set_taxable?: boolean;
   is_active?: boolean;
+  closing_day?: string;
+  payment_day?: string;
 }
 
 export interface ProcessPDFResponse {
@@ -214,6 +222,19 @@ export interface PurchaseInvoice {
   // canonical 化結果。false なら UI に picker を出す
   company_matched?: boolean;
   candidate_canonicals?: string[];
+  /** 支払条件から計算した計上月 "YYYY年M月"（日付が読めなければ ""） */
+  target_year_month?: string;
+  /** 計算に使った締め日（"月末" | "N日"）とマスタ由来かどうか */
+  closing_day?: string;
+  closing_day_from_master?: boolean;
+  payment_day?: string;
+}
+
+export interface PurchaseCompanyTermsResponse {
+  company_name: string;
+  closing_day: string;
+  closing_day_from_master: boolean;
+  payment_day: string;
 }
 
 export interface ProcessPurchasePDFResponse {
