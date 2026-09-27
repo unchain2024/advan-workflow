@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { Button } from '../components/Common/Button';
 import { Message } from '../components/Common/Message';
@@ -10,7 +11,12 @@ import { CompanyMasterPanel } from '../components/CompanyMaster/CompanyMasterPan
 type SettingsTab = 'config' | 'companies';
 
 export const SettingsPage: React.FC = () => {
-  const [tab, setTab] = useState<SettingsTab>('config');
+  // タブは URL (?tab=companies) と同期する（サイドバーから直接開けるように）
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: SettingsTab = searchParams.get('tab') === 'companies' ? 'companies' : 'config';
+  const setTab = (next: SettingsTab) => {
+    setSearchParams(next === 'companies' ? { tab: 'companies' } : {});
+  };
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

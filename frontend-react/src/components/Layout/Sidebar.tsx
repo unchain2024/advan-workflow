@@ -32,10 +32,22 @@ const navGroups: NavGroup[] = [
   {
     title: '設定',
     items: [
-      { path: '/settings', label: '自社情報設定' },
+      { path: '/settings', label: '自社情報' },
+      { path: '/settings?tab=companies', label: '得意先・仕入先マスタ' },
     ],
   },
 ];
+
+// path はクエリ付き（例: /settings?tab=companies）も許可する
+const isItemActive = (itemPath: string, pathname: string, search: string): boolean => {
+  const [p, q] = itemPath.split('?');
+  if (p !== pathname) return false;
+  const current = new URLSearchParams(search);
+  const wanted = new URLSearchParams(q || '');
+  // クエリ無しの項目は、他項目が使うクエリ(tab)が無いときだけアクティブ
+  if (!q) return !current.get('tab');
+  return [...wanted.entries()].every(([k, v]) => current.get(k) === v);
+};
 
 const NavGroupSection: React.FC<{
   group: NavGroup;
@@ -43,7 +55,9 @@ const NavGroupSection: React.FC<{
   onToggle: () => void;
 }> = ({ group, isOpen, onToggle }) => {
   const location = useLocation();
-  const hasActive = group.items.some((item) => item.path === location.pathname);
+  const hasActive = group.items.some((item) =>
+    isItemActive(item.path, location.pathname, location.search)
+  );
 
   return (
     <div>
@@ -78,7 +92,7 @@ const NavGroupSection: React.FC<{
       >
         <div className="ml-3 border-l-2 border-gray-200 mt-1 space-y-0.5">
           {group.items.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = isItemActive(item.path, location.pathname, location.search);
             return (
               <Link
                 key={item.path}
@@ -106,7 +120,7 @@ export const Sidebar: React.FC = () => {
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
     const initial = new Set<string>();
     for (const group of navGroups) {
-      if (group.items.some((item) => item.path === location.pathname)) {
+      if (group.items.some((item) => isItemActive(item.path, location.pathname, location.search))) {
         initial.add(group.title);
       }
     }

@@ -8,16 +8,19 @@ import {
   SupplierGroupSection,
   type PurchaseGroup,
 } from '../components/Purchase/SupplierGroupSection';
-import { processPurchasePDF, savePurchase } from '../api/client';
+import { processPurchasePDF, savePurchase, getPurchaseCompanyTerms } from '../api/client';
 import type { ProcessPurchasePDFResponse } from '../types';
+import { computeTargetYearMonth, yearMonthToApi } from '../utils/paymentTerms';
 
-// 仕入先名でグルーピング
+// 仕入先 × 計上月 でグルーピング（締め日の違う仕入先が混ざっても月ごとに分けて保存できる）
 function groupBySupplier(results: ProcessPurchasePDFResponse[]): PurchaseGroup[] {
   const map = new Map<string, PurchaseGroup>();
 
   for (const r of results) {
     for (const inv of r.purchase_invoices) {
-      const key = inv.supplier_name || '（仕入先名なし）';
+      const supplierKey = inv.supplier_name || '（仕入先名なし）';
+      const yearMonth = inv.target_year_month || '';
+      const key = `${supplierKey}__${yearMonth}`;
       const existing = map.get(key);
       // canonical 化失敗 → picker を即時表示
       const hasMismatch = inv.company_matched === false;
@@ -36,7 +39,11 @@ function groupBySupplier(results: ProcessPurchasePDFResponse[]): PurchaseGroup[]
       } else {
         map.set(key, {
           id: `${key}__${inv.slip_number || crypto.randomUUID()}`,
-          supplierName: key,
+          supplierName: supplierKey,
+          yearMonth,
+          closingDay: inv.closing_day || '月末',
+          closingDayFromMaster: !!inv.closing_day_from_master,
+          paymentDay: inv.payment_day || '',
           invoices: [inv],
           pdfUrls: [r.purchase_pdf_url],
           isSaved: false,
@@ -66,8 +73,6 @@ export const PurchasePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [salesPerson, setSalesPerson] = useState('');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
 
   const [groups, setGroups] = useState<PurchaseGroup[]>([]);
 
@@ -157,10 +162,16 @@ export const PurchasePage: React.FC = () => {
       return;
     }
 
+    // 計上月（"YYYY年M月" → "YYYY-MM"）。未判定なら保存しない
+    const yearMonth = yearMonthToApi(group.yearMonth);
+    if (!yearMonth) {
+      updateGroup(groupIndex, { error: '計上月が未選択です。計上月を選んでから保存してください。' });
+      return;
+    }
+
     updateGroup(groupIndex, { isSaving: true, error: null, showDuplicateDialog: false });
 
     try {
-      const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
 
       const response = await savePurchase({
         company_name: companyName,
@@ -218,59 +229,98 @@ export const PurchasePage: React.FC = () => {
     }
   };
 
-  // Phase C: 同一 canonical の既存グループがあれば merge、無ければ rename
-  const handleSelectSupplier = (groupIndex: number, selectedName: string) => {
+  // 仕入先ピッカーで選択: その仕入先の締め日で計上月を再計算し、
+  // 仕入先×計上月が同じ既存グループがあれば merge、無ければ新グループ（月が分かれれば複数に分割）
+  const handleSelectSupplier = async (groupIndex: number, selectedName: string) => {
     const group = groups[groupIndex];
     if (!group || group.isMerging) return; // 連打抑制
+    updateGroup(groupIndex, { isMerging: true });
 
-    // 全 invoice の supplier_name を更新
-    const updatedInvoices = group.invoices.map((inv) => ({
-      ...inv,
-      supplier_name: selectedName,
-    }));
-
-    // 既存グループに同 canonical があるか
-    const targetIndex = groups.findIndex(
-      (g, i) => i !== groupIndex && !g.supplierMismatch && g.supplierName === selectedName
-    );
-
-    if (targetIndex >= 0) {
-      // === merge ===
-      setGroups((prev) =>
-        prev
-          .map((g, i) => {
-            if (i === targetIndex) {
-              return {
-                ...g,
-                invoices: [...g.invoices, ...updatedInvoices],
-                pdfUrls: [...g.pdfUrls, ...group.pdfUrls],
-                isSaved: false,
-                showDuplicateDialog: false,
-                duplicateNotes: [],
-                editingSupplierIndex: null,
-                requestId: crypto.randomUUID(),
-                isMerging: false,
-                error: null,
-              };
-            }
-            return g;
-          })
-          .filter((_, i) => i !== groupIndex)
-      );
-      setError(null);
-    } else {
-      // === rename ===
-      updateGroup(groupIndex, {
-        supplierName: selectedName,
-        invoices: updatedInvoices,
-        supplierMismatch: false,
-        supplierCandidates: [],
-        extractedSupplierName: '',
-        requestId: crypto.randomUUID(),
-        error: null,
-        isMerging: false,
-      });
+    let terms = { closing_day: '月末', closing_day_from_master: false, payment_day: '' };
+    try {
+      const t = await getPurchaseCompanyTerms(selectedName);
+      terms = { closing_day: t.closing_day, closing_day_from_master: t.closing_day_from_master, payment_day: t.payment_day };
+    } catch (e) {
+      console.error('支払条件の取得に失敗（月末締めとして継続）:', e);
     }
+
+    // 伝票ごとに計上月を再計算して月別に分ける
+    const byMonth = new Map<string, { invoices: PurchaseGroup['invoices']; pdfUrls: string[] }>();
+    group.invoices.forEach((inv, i) => {
+      const ym = computeTargetYearMonth(inv.date, terms.closing_day);
+      const updated = {
+        ...inv,
+        supplier_name: selectedName,
+        target_year_month: ym,
+        closing_day: terms.closing_day,
+        closing_day_from_master: terms.closing_day_from_master,
+        payment_day: terms.payment_day,
+      };
+      const entry = byMonth.get(ym) || { invoices: [], pdfUrls: [] };
+      entry.invoices.push(updated);
+      entry.pdfUrls.push(group.pdfUrls[i]);
+      byMonth.set(ym, entry);
+    });
+
+    setGroups((prev) => {
+      const result = prev.filter((_, i) => i !== groupIndex);
+      for (const [ym, part] of byMonth) {
+        const targetIndex = result.findIndex(
+          (g) => !g.supplierMismatch && g.supplierName === selectedName && g.yearMonth === ym
+        );
+        if (targetIndex >= 0) {
+          // === merge ===
+          const target = result[targetIndex];
+          result[targetIndex] = {
+            ...target,
+            invoices: [...target.invoices, ...part.invoices],
+            pdfUrls: [...target.pdfUrls, ...part.pdfUrls],
+            isSaved: false,
+            showDuplicateDialog: false,
+            duplicateNotes: [],
+            editingSupplierIndex: null,
+            requestId: crypto.randomUUID(),
+            isMerging: false,
+            error: null,
+          };
+        } else {
+          // === rename（月ごとに新グループ） ===
+          result.push({
+            ...group,
+            id: `${selectedName}__${ym}__${crypto.randomUUID()}`,
+            supplierName: selectedName,
+            yearMonth: ym,
+            closingDay: terms.closing_day,
+            closingDayFromMaster: terms.closing_day_from_master,
+            paymentDay: terms.payment_day,
+            invoices: part.invoices,
+            pdfUrls: part.pdfUrls,
+            supplierMismatch: false,
+            supplierCandidates: [],
+            extractedSupplierName: '',
+            isSaved: false,
+            showDuplicateDialog: false,
+            duplicateNotes: [],
+            editingSupplierIndex: null,
+            requestId: crypto.randomUUID(),
+            error: null,
+            isMerging: false,
+          });
+        }
+      }
+      return result;
+    });
+    setError(null);
+  };
+
+  // 計上月の手動変更（保存先が変わるので保存済フラグと冪等トークンをリセット）
+  const handleChangeYearMonth = (groupIndex: number, yearMonth: string) => {
+    updateGroup(groupIndex, {
+      yearMonth,
+      isSaved: false,
+      requestId: crypto.randomUUID(),
+      error: null,
+    });
   };
 
   // インライン編集（グループ全体に反映 — グループ概念に合わせて挙動変更）
@@ -367,12 +417,12 @@ export const PurchasePage: React.FC = () => {
         <ol className="list-decimal list-inside mt-2 text-gray-700 space-y-1">
           <li>PDFから情報を抽出（Gemini API）</li>
           <li>課税/非課税を自動判定</li>
-          <li>仕入先別にグループ化</li>
-          <li>各仕入先ごとにDBに保存 + 仕入シートを更新</li>
+          <li>仕入先の締め日と伝票の日付から「何月分か（計上月）」を自動判定</li>
+          <li>仕入先×計上月ごとにグループ化して保存</li>
         </ol>
       </div>
 
-      {/* 担当者・対象月入力 */}
+      {/* 担当者入力（計上月は伝票ごとに自動判定するので、ここでは選ばない） */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
         <div className="flex items-end gap-4">
           <div className="flex-1">
@@ -388,36 +438,6 @@ export const PurchasePage: React.FC = () => {
               disabled={isProcessing}
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">対象年</label>
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-              disabled={isProcessing}
-            >
-              {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) => (
-                <option key={y} value={y}>
-                  {y}年
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">対象月</label>
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(Number(e.target.value))}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-              disabled={isProcessing}
-            >
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                <option key={m} value={m}>
-                  {m}月
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
       </div>
 
@@ -425,7 +445,7 @@ export const PurchasePage: React.FC = () => {
         <p className="font-semibold mb-1">複数ファイルをアップロードする場合：</p>
         <ol className="list-decimal list-inside space-y-0.5">
           <li>異なる仕入先の納品書を混ぜてもOK（自動で仕入先別にグループ化されます）</li>
-          <li>同じ対象年月の納品書のみをまとめてください</li>
+          <li>何月分かは伝票の日付と締め日から自動で決まります。月が違う伝票が混ざっても月ごとに分けて保存されます</li>
         </ol>
       </div>
 
@@ -544,6 +564,7 @@ export const PurchasePage: React.FC = () => {
               onUpdateInvoiceField={handleUpdateInvoiceField}
               onDeleteInvoice={handleDeleteInvoice}
               onDeleteItem={handleDeleteItem}
+              onChangeYearMonth={handleChangeYearMonth}
             />
           ))}
         </>

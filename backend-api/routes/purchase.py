@@ -13,6 +13,11 @@ from src.purchase_extractor import PurchaseExtractor, PurchaseInvoice, PurchaseI
 from src import sheets_client
 from src.sheets_client import parse_amount, _find_company_row
 from src.database import MonthlyItemsDB
+from src.payment_terms import (
+    compute_payment_due_date,
+    compute_target_year_month,
+    describe_closing_day,
+)
 from src.canonical_companies import (
     list_canonicals,
     get_purchase_taxability_hint,
@@ -52,6 +57,20 @@ class PurchaseInvoiceResponse(BaseModel):
     # canonical 化結果。False なら UI 側で picker 表示
     company_matched: bool = True
     candidate_canonicals: list[str] = []
+    # 支払条件から計算した計上月（'YYYY年M月'）。日付が読めなければ ""
+    target_year_month: str = ""
+    # 計算に使った締め日（表示用。未設定なら "月末"）とマスタ由来かどうか
+    closing_day: str = "月末"
+    closing_day_from_master: bool = False
+    payment_day: str = ""
+
+
+class PurchaseCompanyTermsResponse(BaseModel):
+    """仕入先の支払条件（計上画面で仕入先を選び直したときの再計算用）"""
+    company_name: str
+    closing_day: str
+    closing_day_from_master: bool
+    payment_day: str
 
 
 class ProcessPurchasePDFResponse(BaseModel):
@@ -168,13 +187,30 @@ def _extract_year_from_year_month(year_month: str) -> int:
     return datetime.now().year
 
 
+def _lookup_purchase_terms(db: MonthlyItemsDB, canonical: str) -> dict:
+    """仕入先マスタから締め日/支払日を引く。未登録・未設定なら月末締め扱い"""
+    row = db.get_company("purchase", canonical) if canonical else None
+    closing_raw = (row or {}).get("closing_day", "") or ""
+    return {
+        "closing_day": describe_closing_day(closing_raw),
+        "closing_day_from_master": bool(closing_raw),
+        "payment_day": (row or {}).get("payment_day", "") or "",
+    }
+
+
 def _convert_purchase_invoice(
     invoice: PurchaseInvoice,
     company_matched: bool = True,
     candidate_canonicals: Optional[list[str]] = None,
+    terms: Optional[dict] = None,
 ) -> PurchaseInvoiceResponse:
     """PurchaseInvoiceをレスポンス形式に変換"""
+    terms = terms or {"closing_day": "月末", "closing_day_from_master": False, "payment_day": ""}
     return PurchaseInvoiceResponse(
+        target_year_month=compute_target_year_month(invoice.date, terms["closing_day"]),
+        closing_day=terms["closing_day"],
+        closing_day_from_master=terms["closing_day_from_master"],
+        payment_day=terms["payment_day"],
         date=invoice.date,
         supplier_name=invoice.supplier_name,
         slip_number=invoice.slip_number,
@@ -224,11 +260,14 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
         # ファイル名ヒントで親/子を判別、PURCHASE_TAXABILITY 登録会社は LLM 抽出値を上書き
         # canonical 化結果を invoice ごとに記録して response に含める (Phase 5d': UI即時picker表示)
         canonical_match_results: list[tuple[bool, list[str]]] = []  # (matched, candidates)
+        terms_results: list[dict] = []  # 仕入先ごとの支払条件（計上月の計算用）
+        terms_db = MonthlyItemsDB()
         for inv in invoices:
             raw_supplier = inv.supplier_name
             if not raw_supplier:
                 # supplier_name 自体が空 → mismatch 扱い、全候補返す
                 canonical_match_results.append((False, list_canonicals('purchase')))
+                terms_results.append(_lookup_purchase_terms(terms_db, ""))
                 continue
             canonical = sheets_client.get_canonical_purchase_company_name(
                 raw_supplier, filename=file.filename
@@ -241,12 +280,14 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
                     f"(LLM抽出 is_taxable={inv.is_taxable}, indicators={inv.detected_indicators})"
                 )
                 canonical_match_results.append((False, list_canonicals('purchase')))
+                terms_results.append(_lookup_purchase_terms(terms_db, ""))
                 continue
 
             if canonical != raw_supplier:
                 print(f"  [仕入正規化] '{raw_supplier}' → '{canonical}'")
             inv.supplier_name = canonical
             canonical_match_results.append((True, []))
+            terms_results.append(_lookup_purchase_terms(terms_db, canonical))
 
             # Layer 2: シート分類が確定している会社は無条件で上書き
             hint = get_purchase_taxability_hint(canonical)
@@ -310,8 +351,11 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
                     inv,
                     company_matched=matched,
                     candidate_canonicals=candidates,
+                    terms=terms,
                 )
-                for inv, (matched, candidates) in zip(invoices, canonical_match_results)
+                for inv, (matched, candidates), terms in zip(
+                    invoices, canonical_match_results, terms_results
+                )
             ],
             records_count=len(invoices),
             purchase_pdf_url=purchase_pdf_url,
@@ -326,6 +370,18 @@ async def process_purchase_pdf(file: UploadFile = File(...)):
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
+
+
+@router.get("/purchase-company-terms", response_model=PurchaseCompanyTermsResponse)
+async def get_purchase_company_terms(company_name: str = Query(...)):
+    """仕入先の支払条件（締め日・支払日）を返す。未登録なら月末締め扱い"""
+    try:
+        db = MonthlyItemsDB()
+        canonical = sheets_client.get_canonical_purchase_company_name(company_name) or company_name
+        terms = _lookup_purchase_terms(db, canonical)
+        return PurchaseCompanyTermsResponse(company_name=canonical, **terms)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/save-purchase")
@@ -652,22 +708,33 @@ async def get_purchase_table():
         headers = ["仕入先"]
         for ym in year_months:
             headers += [f"{ym} 課税発生", f"{ym} 課税消費税",
-                        f"{ym} 非課税発生", f"{ym} 消滅"]
+                        f"{ym} 非課税発生", f"{ym} 消滅", f"{ym} 支払予定日"]
 
         def _fmt(n: int) -> str:
             return f"{n:,}" if n else ""
 
+        # 支払予定日: 仕入先マスタの支払日から計算（未設定なら空）
+        payment_days = {
+            c["canonical_name"]: c.get("payment_day", "")
+            for c in db.list_companies("purchase", include_inactive=True)
+        }
+
         rows: list[list[str]] = []
         for company in companies:
             row = [company]
+            pay_day = payment_days.get(company, "")
             for ym in year_months:
                 t = tmap.get((company, ym), {})
                 p = pmap.get((company, ym), {})
+                has_amount = any(
+                    t.get(k, 0) for k in ("taxable_subtotal", "taxable_tax", "nontaxable_subtotal")
+                )
                 row += [
                     _fmt(t.get("taxable_subtotal", 0)),
                     _fmt(t.get("taxable_tax", 0)),
                     _fmt(t.get("nontaxable_subtotal", 0)),
                     _fmt(p.get("payment_amount", 0)),
+                    compute_payment_due_date(ym, pay_day) if (has_amount and pay_day) else "",
                 ]
             rows.append(row)
 

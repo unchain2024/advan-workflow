@@ -8,6 +8,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.database import MonthlyItemsDB, SimilarCompanyError
+from src.payment_terms import (
+    PaymentTermsError,
+    normalize_closing_day,
+    normalize_payment_day,
+)
 
 router = APIRouter()
 
@@ -25,6 +30,9 @@ class CompanyMasterItem(BaseModel):
     is_active: bool
     created_at: str
     updated_at: str
+    # 支払条件: 締め日("月末"|"N日"|"")・支払日("翌月末"|"翌月N日"|...|"")
+    closing_day: str = ""
+    payment_day: str = ""
 
 
 class CompanyMasterListResponse(BaseModel):
@@ -40,6 +48,8 @@ class CreateCompanyRequest(BaseModel):
     taxable: Optional[bool] = None
     # 類似会社の警告（409）を確認済みで、それでも追加する場合 True
     force: bool = False
+    closing_day: str = ""
+    payment_day: str = ""
 
 
 class SimilarCompanyItem(BaseModel):
@@ -58,6 +68,19 @@ class UpdateCompanyRequest(BaseModel):
     taxable: Optional[bool] = None
     set_taxable: bool = False
     is_active: Optional[bool] = None
+    # None は変更なし、"" は未設定に戻す
+    closing_day: Optional[str] = None
+    payment_day: Optional[str] = None
+
+
+def _normalize_terms(closing_day: Optional[str], payment_day: Optional[str]):
+    """締め日/支払日を正規形にする。不正なら 400"""
+    try:
+        c = None if closing_day is None else normalize_closing_day(closing_day)
+        pdy = None if payment_day is None else normalize_payment_day(payment_day)
+        return c, pdy
+    except PaymentTermsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _validate_domain(domain: str):
@@ -86,6 +109,7 @@ async def list_company_master(domain: str, include_inactive: bool = False):
 async def create_company_master(request: CreateCompanyRequest):
     """得意先/仕入先を追加（類似会社があれば 409 で警告、force=True で強行）"""
     _validate_domain(request.domain)
+    closing_day, payment_day = _normalize_terms(request.closing_day, request.payment_day)
     try:
         db = MonthlyItemsDB()
         created = db.add_company(
@@ -96,6 +120,8 @@ async def create_company_master(request: CreateCompanyRequest):
             department=request.department,
             taxable=request.taxable,
             force=request.force,
+            closing_day=closing_day or "",
+            payment_day=payment_day or "",
         )
         return CompanyMasterItem(**created)
     except SimilarCompanyError as e:
@@ -126,6 +152,7 @@ async def create_company_master(request: CreateCompanyRequest):
 @router.patch("/company-master/{company_id}", response_model=CompanyMasterItem)
 async def update_company_master(company_id: int, request: UpdateCompanyRequest):
     """得意先/仕入先を編集（住所・事業部・課税区分・有効/無効）"""
+    closing_day, payment_day = _normalize_terms(request.closing_day, request.payment_day)
     try:
         db = MonthlyItemsDB()
         updated = db.update_company(
@@ -136,6 +163,8 @@ async def update_company_master(company_id: int, request: UpdateCompanyRequest):
             taxable=request.taxable,
             set_taxable=request.set_taxable,
             is_active=request.is_active,
+            closing_day=closing_day,
+            payment_day=payment_day,
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="対象が見つかりません")

@@ -2,6 +2,7 @@ import React from 'react';
 import { Button } from '../Common/Button';
 import { Message } from '../Common/Message';
 import type { PurchaseInvoice, ExistingPurchaseNoteInfo } from '../../types';
+import { parseYearMonth } from '../../utils/paymentTerms';
 
 export interface PurchaseGroup {
   // 識別子
@@ -32,6 +33,12 @@ export interface PurchaseGroup {
   error: string | null;
   // Phase C: マージ/canonical 解決中フラグ (ピッカー連打抑制)
   isMerging?: boolean;
+  // 計上月 "YYYY年M月"（伝票日付＋仕入先の締め日から自動判定。手動変更可。空=判定不能）
+  yearMonth: string;
+  // 判定に使った締め日（"月末" | "N日"）とマスタ由来かどうか
+  closingDay: string;
+  closingDayFromMaster: boolean;
+  paymentDay: string;
 }
 
 /** 伝票番号の問題を invoice index → 'empty' | 'duplicate' で返す（空・重複は DB で上書きされるため保存不可） */
@@ -73,6 +80,8 @@ interface Props {
   onDeleteInvoice: (groupIndex: number, invoiceIndex: number) => void;
   // Phase 5d': 明細1行ずつ削除
   onDeleteItem: (groupIndex: number, invoiceIndex: number, itemIndex: number) => void;
+  // 計上月の手動変更
+  onChangeYearMonth: (groupIndex: number, yearMonth: string) => void;
 }
 
 export const SupplierGroupSection: React.FC<Props> = ({
@@ -89,6 +98,7 @@ export const SupplierGroupSection: React.FC<Props> = ({
   onUpdateInvoiceField,
   onDeleteInvoice,
   onDeleteItem,
+  onChangeYearMonth,
 }) => {
   const totalSubtotal = group.invoices.reduce((s, i) => s + i.subtotal, 0);
   const totalTax = group.invoices.reduce((s, i) => s + i.tax, 0);
@@ -99,6 +109,14 @@ export const SupplierGroupSection: React.FC<Props> = ({
 
   const isMultiGroup = totalGroups > 1;
 
+  // 計上月セレクタ用
+  const ym = parseYearMonth(group.yearMonth);
+  const thisYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: 5 }, (_, i) => thisYear - 2 + i);
+  if (ym && !yearOptions.includes(ym.year)) yearOptions.push(ym.year);
+  yearOptions.sort((a, b) => a - b);
+  const setYm = (year: number, month: number) => onChangeYearMonth(groupIndex, `${year}年${month}月`);
+
   return (
     <div className={isMultiGroup ? 'mt-8 border-2 border-gray-300 rounded-xl p-6 bg-gray-50' : 'mt-8'}>
       {isMultiGroup && (
@@ -108,8 +126,65 @@ export const SupplierGroupSection: React.FC<Props> = ({
           </h2>
           <p className="text-sm text-gray-600 mt-1">
             {group.invoices.length} 件の仕入納品書 / 合計 ¥{totalAmount.toLocaleString()}
+            {group.yearMonth && <span className="ml-3">計上月: {group.yearMonth}</span>}
             {group.isSaved && <span className="ml-3 text-green-600 font-medium">✓ 保存済</span>}
           </p>
+        </div>
+      )}
+
+      {/* 計上月（伝票日付 × 締め日 から自動判定。手動で変更可） */}
+      {!group.supplierMismatch && (
+        <div
+          className={`mb-6 rounded-lg border p-4 ${
+            group.yearMonth ? 'bg-white border-gray-200' : 'bg-red-50 border-red-300'
+          }`}
+        >
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                計上月 <span className="text-red-500">*</span>
+              </label>
+              <div className="flex gap-2">
+                <select
+                  value={ym?.year ?? ''}
+                  onChange={(e) => setYm(Number(e.target.value), ym?.month ?? new Date().getMonth() + 1)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  {!ym && <option value="">年</option>}
+                  {yearOptions.map((y) => (
+                    <option key={y} value={y}>
+                      {y}年
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={ym?.month ?? ''}
+                  onChange={(e) => setYm(ym?.year ?? thisYear, Number(e.target.value))}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  {!ym && <option value="">月</option>}
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                    <option key={m} value={m}>
+                      {m}月
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="text-sm text-gray-600 pb-2">
+              {group.yearMonth ? (
+                <>
+                  伝票の日付と締め日（{group.closingDay}
+                  {group.closingDayFromMaster ? '・マスタ設定' : '・マスタ未設定のため月末締めとして計算'}
+                  ）から自動判定しました。違っていれば変更してください。
+                </>
+              ) : (
+                <span className="text-red-700 font-medium">
+                  伝票の日付が読み取れなかったため計上月を判定できません。計上月を選んでください。
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -481,11 +556,16 @@ export const SupplierGroupSection: React.FC<Props> = ({
         <div className="mt-8">
           <div className="border-t-2 border-gray-200 mb-6"></div>
           <h2 className="text-2xl font-semibold text-gray-700 mb-4">
-            {group.supplierName}: 仕入れスプレッドシートへの書き込み
+            {group.supplierName}{group.yearMonth ? `（${group.yearMonth}分）` : ''}: 仕入データの保存
           </h2>
           <Message type="info" className="mb-4">
-            内容を確認後、スプレッドシートに書き込んでください。
+            内容を確認後、保存してください。
           </Message>
+          {!group.yearMonth && (
+            <Message type="error" className="mb-4">
+              計上月が未選択です。上の「計上月」を選んでから保存してください。
+            </Message>
+          )}
           {slipIssues.size > 0 && (
             <Message type="error" className="mb-4">
               伝票番号が{emptySlipCount > 0 ? `空（${emptySlipCount}件）` : ''}
@@ -500,9 +580,9 @@ export const SupplierGroupSection: React.FC<Props> = ({
             variant="primary"
             fullWidth
             loading={group.isSaving}
-            disabled={group.supplierMismatch || slipIssues.size > 0}
+            disabled={group.supplierMismatch || slipIssues.size > 0 || !group.yearMonth}
           >
-            このグループをスプレッドシートに書き込む
+            このグループを{group.yearMonth ? `${group.yearMonth}分として` : ''}保存する
           </Button>
         </div>
       ) : (

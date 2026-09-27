@@ -9,6 +9,8 @@ import {
   deactivateCompanyMaster,
 } from '../../api/client';
 import type { CompanyDomain, CompanyMasterItem, SimilarCompanyItem } from '../../types';
+import { PaymentTermsFields } from './PaymentTermsFields';
+import { closingDayLabel, paymentDayLabel } from '../../utils/paymentTerms';
 
 // 課税区分の選択肢（仕入のみ）。null=自動判定（LLM抽出値に委ねる）
 type TaxableChoice = 'true' | 'false' | 'auto';
@@ -25,6 +27,8 @@ interface EditState {
   address: string;
   department: string;
   taxable: TaxableChoice;
+  closing_day: string;
+  payment_day: string;
 }
 
 const emptyNew = {
@@ -33,6 +37,8 @@ const emptyNew = {
   address: '',
   department: '',
   taxable: 'auto' as TaxableChoice,
+  closing_day: '',
+  payment_day: '',
 };
 
 export const CompanyMasterPanel: React.FC = () => {
@@ -103,6 +109,9 @@ export const CompanyMasterPanel: React.FC = () => {
         department: newCompany.department.trim(),
         taxable: isPurchase ? choiceToTaxable(newCompany.taxable) : null,
         force,
+        ...(isPurchase
+          ? { closing_day: newCompany.closing_day, payment_day: newCompany.payment_day }
+          : {}),
       });
       setSimilarWarning(null);
       setSuccess(`「${newCompany.canonical_name.trim()}」を追加しました`);
@@ -143,6 +152,8 @@ export const CompanyMasterPanel: React.FC = () => {
       address: c.address,
       department: c.department,
       taxable: taxableToChoice(c.taxable),
+      closing_day: c.closing_day || '',
+      payment_day: c.payment_day || '',
     });
     setError(null);
     setSuccess(null);
@@ -163,7 +174,12 @@ export const CompanyMasterPanel: React.FC = () => {
         address: editState.address,
         department: editState.department,
         ...(isPurchase
-          ? { taxable: choiceToTaxable(editState.taxable), set_taxable: true }
+          ? {
+              taxable: choiceToTaxable(editState.taxable),
+              set_taxable: true,
+              closing_day: editState.closing_day,
+              payment_day: editState.payment_day,
+            }
           : {}),
       });
       setSuccess('更新しました');
@@ -344,7 +360,21 @@ export const CompanyMasterPanel: React.FC = () => {
               </select>
             </div>
           )}
+          {isPurchase && (
+            <PaymentTermsFields
+              closingDay={newCompany.closing_day}
+              paymentDay={newCompany.payment_day}
+              onChange={(t) => setNewCompany({ ...newCompany, ...t })}
+              inputCls={inputCls}
+            />
+          )}
         </div>
+        {isPurchase && (
+          <p className="mt-2 text-xs text-gray-500">
+            締め日は仕入れ計上で「何月分に計上するか」の自動判定に使います。未設定は月末締めとして扱います。
+            支払日は入金管理の「支払予定日」に使います。
+          </p>
+        )}
         <div className="mt-4">
           <Button type="submit" variant="primary" loading={creating}>
             追加
@@ -379,13 +409,15 @@ export const CompanyMasterPanel: React.FC = () => {
                 <th className="px-3 py-2 font-medium">住所</th>
                 <th className="px-3 py-2 font-medium">事業部</th>
                 {isPurchase && <th className="px-3 py-2 font-medium">課税</th>}
+                {isPurchase && <th className="px-3 py-2 font-medium">締め日</th>}
+                {isPurchase && <th className="px-3 py-2 font-medium">支払日</th>}
                 <th className="px-3 py-2 font-medium w-40">操作</th>
               </tr>
             </thead>
             <tbody>
               {companies.length === 0 && (
                 <tr>
-                  <td colSpan={isPurchase ? 6 : 5} className="px-3 py-6 text-center text-gray-400">
+                  <td colSpan={isPurchase ? 8 : 5} className="px-3 py-6 text-center text-gray-400">
                     登録がありません
                   </td>
                 </tr>
@@ -437,6 +469,17 @@ export const CompanyMasterPanel: React.FC = () => {
                             </select>
                           </td>
                         )}
+                        {isPurchase && (
+                          <td className="px-3 py-2" colSpan={2}>
+                            <PaymentTermsFields
+                              compact
+                              closingDay={editState.closing_day}
+                              paymentDay={editState.payment_day}
+                              onChange={(t) => setEditState({ ...editState, ...t })}
+                              inputCls={inputCls}
+                            />
+                          </td>
+                        )}
                         <td className="px-3 py-2">
                           <div className="flex gap-2">
                             <button
@@ -461,6 +504,12 @@ export const CompanyMasterPanel: React.FC = () => {
                         <td className="px-3 py-2">{c.address || '—'}</td>
                         <td className="px-3 py-2">{c.department || '—'}</td>
                         {isPurchase && <td className="px-3 py-2">{taxableLabel(c.taxable)}</td>}
+                        {isPurchase && (
+                          <td className="px-3 py-2">{closingDayLabel(c.closing_day || '')}</td>
+                        )}
+                        {isPurchase && (
+                          <td className="px-3 py-2">{paymentDayLabel(c.payment_day || '')}</td>
+                        )}
                         <td className="px-3 py-2">
                           <div className="flex gap-3">
                             <button

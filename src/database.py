@@ -282,6 +282,15 @@ class MonthlyItemsDB:
                 CREATE INDEX IF NOT EXISTS idx_company_master_domain_active
                 ON company_master(domain, is_active)
             """)
+            # 支払条件（締め日・支払日）列の追加マイグレーション（無ければ足す・冪等）
+            cursor.execute("PRAGMA table_info(company_master)")
+            existing_cols = {r["name"] for r in cursor.fetchall()}
+            for col in ("closing_day", "payment_day"):
+                if col not in existing_cols:
+                    cursor.execute(
+                        f"ALTER TABLE company_master ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                    )
+                    print(f"    company_master: {col} 列を追加")
             # ハードコード canonical からの初期シード（ドメイン別に空のときだけ）
             self._seed_company_master(cursor)
 
@@ -1140,6 +1149,8 @@ class MonthlyItemsDB:
         department: str = "",
         taxable: Optional[bool] = None,
         force: bool = False,
+        closing_day: str = "",
+        payment_day: str = "",
     ) -> dict:
         """得意先/仕入先を追加
 
@@ -1170,6 +1181,8 @@ class MonthlyItemsDB:
                 taxable=taxable,
                 set_taxable=True,
                 is_active=True,
+                closing_day=closing_day,
+                payment_day=payment_day,
             )
 
         similar = self.find_similar_companies(domain, canonical_name, postal_code, address)
@@ -1184,11 +1197,12 @@ class MonthlyItemsDB:
                 """
                 INSERT INTO company_master
                     (domain, canonical_name, postal_code, address, department,
-                     taxable, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                     taxable, is_active, created_at, updated_at, closing_day, payment_day)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
                 """,
                 (domain, canonical_name, postal_code, address, department,
-                 taxable_val, current_time, current_time),
+                 taxable_val, current_time, current_time,
+                 closing_day or "", payment_day or ""),
             )
             new_id = cursor.lastrowid
         return self.get_company_by_id(new_id)
@@ -1202,9 +1216,12 @@ class MonthlyItemsDB:
         taxable: Optional[bool] = None,
         set_taxable: bool = False,
         is_active: Optional[bool] = None,
+        closing_day: Optional[str] = None,
+        payment_day: Optional[str] = None,
     ) -> Optional[dict]:
         """マスタ更新。None 指定の項目は既存値を保持。
         taxable は NULL も有効値のため、変更したいときだけ set_taxable=True にする。
+        closing_day / payment_day は "" を渡すと未設定に戻す。
         """
         existing = self.get_company_by_id(company_id)
         if not existing:
@@ -1212,6 +1229,8 @@ class MonthlyItemsDB:
         new_postal = existing["postal_code"] if postal_code is None else postal_code
         new_address = existing["address"] if address is None else address
         new_dept = existing["department"] if department is None else department
+        new_closing = existing.get("closing_day", "") if closing_day is None else closing_day
+        new_payment = existing.get("payment_day", "") if payment_day is None else payment_day
         if set_taxable:
             new_taxable = None if taxable is None else (1 if taxable else 0)
         else:
@@ -1225,11 +1244,12 @@ class MonthlyItemsDB:
                 """
                 UPDATE company_master
                 SET postal_code = ?, address = ?, department = ?,
-                    taxable = ?, is_active = ?, updated_at = ?
+                    taxable = ?, is_active = ?, updated_at = ?,
+                    closing_day = ?, payment_day = ?
                 WHERE id = ?
                 """,
                 (new_postal, new_address, new_dept, new_taxable, new_active,
-                 current_time, company_id),
+                 current_time, new_closing, new_payment, company_id),
             )
         return self.get_company_by_id(company_id)
 
@@ -1257,6 +1277,9 @@ class MonthlyItemsDB:
             "is_active": bool(row["is_active"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            # 支払条件（締め日・支払日）。空は未設定
+            "closing_day": row["closing_day"] if "closing_day" in row.keys() else "",
+            "payment_day": row["payment_day"] if "payment_day" in row.keys() else "",
         }
 
     def update_delivery_note_amounts(
