@@ -10,6 +10,7 @@ import {
 } from '../../api/client';
 import type { CompanyDomain, CompanyMasterItem, SimilarCompanyItem } from '../../types';
 import { PaymentTermsFields } from './PaymentTermsFields';
+import { AliasListInput } from './AliasListInput';
 import { closingDayLabel, paymentDayLabel } from '../../utils/paymentTerms';
 
 // 課税区分の選択肢（仕入のみ）。null=自動判定（LLM抽出値に委ねる）
@@ -29,6 +30,7 @@ interface EditState {
   taxable: TaxableChoice;
   closing_day: string;
   payment_day: string;
+  aliases: string[];
 }
 
 const emptyNew = {
@@ -39,6 +41,7 @@ const emptyNew = {
   taxable: 'auto' as TaxableChoice,
   closing_day: '',
   payment_day: '',
+  aliases: [] as string[],
 };
 
 export const CompanyMasterPanel: React.FC = () => {
@@ -109,6 +112,7 @@ export const CompanyMasterPanel: React.FC = () => {
         department: newCompany.department.trim(),
         taxable: isPurchase ? choiceToTaxable(newCompany.taxable) : null,
         force,
+        aliases: newCompany.aliases,
         ...(isPurchase
           ? { closing_day: newCompany.closing_day, payment_day: newCompany.payment_day }
           : {}),
@@ -154,6 +158,7 @@ export const CompanyMasterPanel: React.FC = () => {
       taxable: taxableToChoice(c.taxable),
       closing_day: c.closing_day || '',
       payment_day: c.payment_day || '',
+      aliases: c.aliases || [],
     });
     setError(null);
     setSuccess(null);
@@ -173,6 +178,7 @@ export const CompanyMasterPanel: React.FC = () => {
         postal_code: editState.postal_code,
         address: editState.address,
         department: editState.department,
+        aliases: editState.aliases,
         ...(isPurchase
           ? {
               taxable: choiceToTaxable(editState.taxable),
@@ -346,6 +352,13 @@ export const CompanyMasterPanel: React.FC = () => {
               placeholder="例: 東京都渋谷区渋谷1丁目20-1 井門美竹ビル2"
             />
           </div>
+          <div className="md:col-span-2">
+            <AliasListInput
+              aliases={newCompany.aliases}
+              onChange={(next) => setNewCompany({ ...newCompany, aliases: next })}
+              inputCls={inputCls}
+            />
+          </div>
           {isPurchase && (
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">課税区分</label>
@@ -408,6 +421,7 @@ export const CompanyMasterPanel: React.FC = () => {
                 <th className="px-3 py-2 font-medium">郵便番号</th>
                 <th className="px-3 py-2 font-medium">住所</th>
                 <th className="px-3 py-2 font-medium">事業部</th>
+                <th className="px-3 py-2 font-medium">伝票上の別名</th>
                 {isPurchase && <th className="px-3 py-2 font-medium">課税</th>}
                 {isPurchase && <th className="px-3 py-2 font-medium">締め日</th>}
                 {isPurchase && <th className="px-3 py-2 font-medium">支払日</th>}
@@ -417,7 +431,7 @@ export const CompanyMasterPanel: React.FC = () => {
             <tbody>
               {companies.length === 0 && (
                 <tr>
-                  <td colSpan={isPurchase ? 8 : 5} className="px-3 py-6 text-center text-gray-400">
+                  <td colSpan={isPurchase ? 9 : 6} className="px-3 py-6 text-center text-gray-400">
                     登録がありません
                   </td>
                 </tr>
@@ -454,6 +468,14 @@ export const CompanyMasterPanel: React.FC = () => {
                             className={inputCls}
                             value={editState.department}
                             onChange={(e) => setEditState({ ...editState, department: e.target.value })}
+                          />
+                        </td>
+                        <td className="px-3 py-2 min-w-[220px]">
+                          <AliasListInput
+                            compact
+                            aliases={editState.aliases}
+                            onChange={(next) => setEditState({ ...editState, aliases: next })}
+                            inputCls={inputCls}
                           />
                         </td>
                         {isPurchase && (
@@ -503,6 +525,22 @@ export const CompanyMasterPanel: React.FC = () => {
                         <td className="px-3 py-2">{c.postal_code || '—'}</td>
                         <td className="px-3 py-2">{c.address || '—'}</td>
                         <td className="px-3 py-2">{c.department || '—'}</td>
+                        <td className="px-3 py-2">
+                          {c.aliases && c.aliases.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {c.aliases.map((a) => (
+                                <span
+                                  key={a}
+                                  className="bg-blue-50 border border-blue-200 text-blue-800 rounded px-2 py-0.5 text-xs"
+                                >
+                                  {a}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                         {isPurchase && <td className="px-3 py-2">{taxableLabel(c.taxable)}</td>}
                         {isPurchase && (
                           <td className="px-3 py-2">{closingDayLabel(c.closing_day || '')}</td>

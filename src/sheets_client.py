@@ -323,6 +323,10 @@ def get_canonical_company_name(
     year は後方互換のため受け取るが未使用。filename で親/子(HARE事業部等)を判別。
     マッチしない/曖昧な場合は None（フロントの会社ピッカーに戻す）。
     """
+    alias_hit = _match_alias("sales", company_name)
+    if alias_hit:
+        print(f"    別名で正規会社名取得: '{company_name}' → '{alias_hit}'")
+        return alias_hit
     canonical = match_company_name_with_filename(
         company_name, list_canonicals("sales"), filename=filename
     )
@@ -331,12 +335,30 @@ def get_canonical_company_name(
     return canonical
 
 
+def _match_alias(domain: str, company_name: str) -> Optional[str]:
+    """伝票上の別名（company_master.aliases）に一致すれば正式名を返す。DB不調時は None"""
+    if not company_name:
+        return None
+    try:
+        from .database import MonthlyItemsDB
+
+        hit = MonthlyItemsDB().find_company_by_alias(domain, company_name)
+        return hit["canonical_name"] if hit else None
+    except Exception as e:
+        print(f"    [alias] 別名照合をスキップ: {e}")
+        return None
+
+
 def get_canonical_purchase_company_name(
     company_name: str,
     year: Optional[int] = None,
     filename: Optional[str] = None,
 ) -> Optional[str]:
     """仕入 canonical 会社名を取得（company_master/canonical 経由・シート非依存）"""
+    alias_hit = _match_alias("purchase", company_name)
+    if alias_hit:
+        print(f"    別名で仕入れ正規会社名取得: '{company_name}' → '{alias_hit}'")
+        return alias_hit
     canonical = match_company_name_with_filename(
         company_name, list_canonicals("purchase"), filename=filename
     )

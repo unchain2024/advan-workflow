@@ -8,7 +8,12 @@ import {
   SupplierGroupSection,
   type PurchaseGroup,
 } from '../components/Purchase/SupplierGroupSection';
-import { processPurchasePDF, savePurchase, getPurchaseCompanyTerms } from '../api/client';
+import {
+  processPurchasePDF,
+  savePurchase,
+  getPurchaseCompanyTerms,
+  addCompanyAlias,
+} from '../api/client';
 import type { ProcessPurchasePDFResponse } from '../types';
 import { computeTargetYearMonth, yearMonthToApi } from '../utils/paymentTerms';
 
@@ -231,10 +236,23 @@ export const PurchasePage: React.FC = () => {
 
   // 仕入先ピッカーで選択: その仕入先の締め日で計上月を再計算し、
   // 仕入先×計上月が同じ既存グループがあれば merge、無ければ新グループ（月が分かれれば複数に分割）
-  const handleSelectSupplier = async (groupIndex: number, selectedName: string) => {
+  const handleSelectSupplier = async (
+    groupIndex: number,
+    selectedName: string,
+    rememberAlias: boolean = false
+  ) => {
     const group = groups[groupIndex];
     if (!group || group.isMerging) return; // 連打抑制
     updateGroup(groupIndex, { isMerging: true });
+
+    // 抽出された表記を別名として登録（失敗しても取込は続行）
+    if (rememberAlias && group.extractedSupplierName && group.extractedSupplierName !== selectedName) {
+      try {
+        await addCompanyAlias('purchase', selectedName, group.extractedSupplierName);
+      } catch (e) {
+        console.error('別名の登録に失敗:', e);
+      }
+    }
 
     let terms = { closing_day: '月末', closing_day_from_master: false, payment_day: '' };
     try {

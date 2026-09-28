@@ -170,6 +170,20 @@ export const updateCompanyMaster = async (
   return response.data;
 };
 
+/** 取込画面で選んだ会社に「伝票上の別名」を1件追加（次回から自動で一致させる） */
+export const addCompanyAlias = async (
+  domain: CompanyDomain,
+  canonicalName: string,
+  alias: string
+): Promise<CompanyMasterItem> => {
+  const response = await apiClient.post<CompanyMasterItem>('/company-master/alias', {
+    domain,
+    canonical_name: canonicalName,
+    alias,
+  });
+  return response.data;
+};
+
 export const deactivateCompanyMaster = async (id: number): Promise<CompanyMasterItem> => {
   const response = await apiClient.delete<CompanyMasterItem>(`/company-master/${id}`);
   return response.data;
