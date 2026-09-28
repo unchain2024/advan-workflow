@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '../Common/Button';
 import { Message } from '../Common/Message';
 import type { PurchaseInvoice, ExistingPurchaseNoteInfo } from '../../types';
@@ -65,7 +65,7 @@ interface Props {
   totalGroups: number;
   onSave: (groupIndex: number, forceOverwrite: boolean) => void;
   onCancelDuplicate: (groupIndex: number) => void;
-  onSelectSupplier: (groupIndex: number, name: string) => void;
+  onSelectSupplier: (groupIndex: number, name: string, rememberAlias: boolean) => void;
   onSetShowAllSupplierCandidates: (groupIndex: number, show: boolean) => void;
   onSetSupplierFilter: (groupIndex: number, filter: string) => void;
   onSetEditingSupplierIndex: (groupIndex: number, idx: number | null) => void;
@@ -108,6 +108,8 @@ export const SupplierGroupSection: React.FC<Props> = ({
   const dupSlipCount = [...slipIssues.values()].filter((v) => v === 'duplicate').length;
 
   const isMultiGroup = totalGroups > 1;
+  // ピッカーで選んだ仕入先に、抽出された表記を別名として覚えるか（次回から自動一致）
+  const [rememberAlias, setRememberAlias] = useState(!!group.extractedSupplierName);
 
   // 計上月セレクタ用
   const ym = parseYearMonth(group.yearMonth);
@@ -203,6 +205,24 @@ export const SupplierGroupSection: React.FC<Props> = ({
               仕入先「{group.extractedSupplierName}」がマスターに登録されていません。正しい仕入先を選択してください：
             </p>
 
+            {group.extractedSupplierName && (
+              <label className="mt-2 mb-3 flex items-start gap-2 text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={rememberAlias}
+                  onChange={(e) => setRememberAlias(e.target.checked)}
+                  disabled={group.isMerging}
+                />
+                <span>
+                  「{group.extractedSupplierName}」を、選んだ仕入先の<b>伝票上の別名</b>として登録する
+                  <span className="block text-xs text-gray-500">
+                    次回からこの表記の伝票は自動でその仕入先に入ります（設定の仕入先マスタで変更できます）
+                  </span>
+                </span>
+              </label>
+            )}
+
             {group.isMerging && (
               <p className="text-sm text-blue-700 font-medium">処理中...</p>
             )}
@@ -241,7 +261,7 @@ export const SupplierGroupSection: React.FC<Props> = ({
                       <button
                         key={name}
                         type="button"
-                        onClick={() => onSelectSupplier(groupIndex, name)}
+                        onClick={() => onSelectSupplier(groupIndex, name, rememberAlias)}
                         disabled={group.isMerging}
                         className="block w-full text-left px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                       >

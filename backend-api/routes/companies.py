@@ -33,6 +33,8 @@ class CompanyMasterItem(BaseModel):
     # 支払条件: 締め日("月末"|"N日"|"")・支払日("翌月末"|"翌月N日"|...|"")
     closing_day: str = ""
     payment_day: str = ""
+    # 伝票上の別名（この表記で伝票に書かれていたらこの会社に集計する）
+    aliases: list[str] = []
 
 
 class CompanyMasterListResponse(BaseModel):
@@ -50,6 +52,7 @@ class CreateCompanyRequest(BaseModel):
     force: bool = False
     closing_day: str = ""
     payment_day: str = ""
+    aliases: list[str] = []
 
 
 class SimilarCompanyItem(BaseModel):
@@ -71,6 +74,14 @@ class UpdateCompanyRequest(BaseModel):
     # None は変更なし、"" は未設定に戻す
     closing_day: Optional[str] = None
     payment_day: Optional[str] = None
+    # None は変更なし、[] は全削除
+    aliases: Optional[list[str]] = None
+
+
+class AddAliasRequest(BaseModel):
+    domain: str
+    canonical_name: str
+    alias: str
 
 
 def _normalize_terms(closing_day: Optional[str], payment_day: Optional[str]):
@@ -122,6 +133,7 @@ async def create_company_master(request: CreateCompanyRequest):
             force=request.force,
             closing_day=closing_day or "",
             payment_day=payment_day or "",
+            aliases=request.aliases,
         )
         return CompanyMasterItem(**created)
     except SimilarCompanyError as e:
@@ -165,12 +177,34 @@ async def update_company_master(company_id: int, request: UpdateCompanyRequest):
             is_active=request.is_active,
             closing_day=closing_day,
             payment_day=payment_day,
+            aliases=request.aliases,
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="対象が見つかりません")
         return CompanyMasterItem(**updated)
     except HTTPException:
         raise
+    except ValueError as e:
+        # 別名の衝突（他社の正式名/別名と同じ）
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/company-master/alias", response_model=CompanyMasterItem)
+async def add_company_alias(request: AddAliasRequest):
+    """会社に「伝票上の別名」を1件追加（取込画面のピッカーで選んだ表記を覚える用）"""
+    _validate_domain(request.domain)
+    try:
+        db = MonthlyItemsDB()
+        updated = db.add_company_alias(request.domain, request.canonical_name, request.alias)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="対象の会社が見つかりません")
+        return CompanyMasterItem(**updated)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

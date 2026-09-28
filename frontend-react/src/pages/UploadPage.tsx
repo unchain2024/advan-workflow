@@ -11,6 +11,7 @@ import {
   processPDF,
   regenerateGroupInvoice,
   getCompanyBillingInfo,
+  addCompanyAlias,
 } from '../api/client';
 import { useAppStore } from '../store/useAppStore';
 import type {
@@ -218,12 +219,25 @@ export const UploadPage: React.FC = () => {
 
   // canonical mismatch picker から会社を選択
   // Phase C: 同一 canonical の既存グループがあれば merge、無ければ rename
-  const handleSelectCompany = async (groupIndex: number, selectedName: string) => {
+  const handleSelectCompany = async (
+    groupIndex: number,
+    selectedName: string,
+    rememberAlias: boolean = false
+  ) => {
     const group = groups[groupIndex];
     if (!group || group.isMerging) return; // 連打抑制
 
     // 連打抑制フラグ ON
     updateGroup(groupIndex, { isMerging: true });
+
+    // 抽出された表記を別名として登録（失敗しても取込は続行）
+    if (rememberAlias && group.extractedCompanyName && group.extractedCompanyName !== selectedName) {
+      try {
+        await addCompanyAlias('sales', selectedName, group.extractedCompanyName);
+      } catch (e) {
+        console.error('別名の登録に失敗:', e);
+      }
+    }
 
     const yearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
 

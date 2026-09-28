@@ -60,6 +60,8 @@ export interface CompanyMasterItem {
   closing_day: string;
   /** 支払日: "" (未設定) | "翌月末" | "翌月10日" など */
   payment_day: string;
+  /** 伝票上の別名（この表記で伝票に書かれていたらこの会社に集計する） */
+  aliases: string[];
 }
 
 export interface CreateCompanyRequest {
@@ -73,6 +75,7 @@ export interface CreateCompanyRequest {
   force?: boolean;
   closing_day?: string;
   payment_day?: string;
+  aliases?: string[];
 }
 
 /** 追加時に見つかった類似会社（409 レスポンスの detail.similar） */
@@ -93,6 +96,8 @@ export interface UpdateCompanyRequest {
   is_active?: boolean;
   closing_day?: string;
   payment_day?: string;
+  /** undefined は変更なし、[] は全削除 */
+  aliases?: string[];
 }
 
 export interface ProcessPDFResponse {

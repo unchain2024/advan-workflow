@@ -291,6 +291,12 @@ class MonthlyItemsDB:
                         f"ALTER TABLE company_master ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
                     )
                     print(f"    company_master: {col} 列を追加")
+            # 伝票上の別名（JSON 配列文字列）。例: gf.A㈱ に ["CLANE DESIGN CO.,LTD", "CLANE"]
+            if "aliases" not in existing_cols:
+                cursor.execute(
+                    "ALTER TABLE company_master ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'"
+                )
+                print("    company_master: aliases 列を追加")
             # ハードコード canonical からの初期シード（ドメイン別に空のときだけ）
             self._seed_company_master(cursor)
 
@@ -1151,6 +1157,7 @@ class MonthlyItemsDB:
         force: bool = False,
         closing_day: str = "",
         payment_day: str = "",
+        aliases: Optional[list[str]] = None,
     ) -> dict:
         """得意先/仕入先を追加
 
@@ -1163,6 +1170,9 @@ class MonthlyItemsDB:
         canonical_name = (canonical_name or "").strip()
         if not canonical_name:
             raise ValueError("会社名が空です")
+        aliases = self._clean_aliases(aliases)
+        if aliases:
+            self.validate_aliases(domain, aliases)
 
         inactive_same: Optional[dict] = None
         for existing in self.list_companies(domain, include_inactive=True):
@@ -1183,6 +1193,7 @@ class MonthlyItemsDB:
                 is_active=True,
                 closing_day=closing_day,
                 payment_day=payment_day,
+                aliases=aliases,
             )
 
         similar = self.find_similar_companies(domain, canonical_name, postal_code, address)
@@ -1197,12 +1208,14 @@ class MonthlyItemsDB:
                 """
                 INSERT INTO company_master
                     (domain, canonical_name, postal_code, address, department,
-                     taxable, is_active, created_at, updated_at, closing_day, payment_day)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                     taxable, is_active, created_at, updated_at, closing_day, payment_day,
+                     aliases)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                 """,
                 (domain, canonical_name, postal_code, address, department,
                  taxable_val, current_time, current_time,
-                 closing_day or "", payment_day or ""),
+                 closing_day or "", payment_day or "",
+                 json.dumps(aliases, ensure_ascii=False)),
             )
             new_id = cursor.lastrowid
         return self.get_company_by_id(new_id)
@@ -1218,14 +1231,20 @@ class MonthlyItemsDB:
         is_active: Optional[bool] = None,
         closing_day: Optional[str] = None,
         payment_day: Optional[str] = None,
+        aliases: Optional[list[str]] = None,
     ) -> Optional[dict]:
         """マスタ更新。None 指定の項目は既存値を保持。
         taxable は NULL も有効値のため、変更したいときだけ set_taxable=True にする。
-        closing_day / payment_day は "" を渡すと未設定に戻す。
+        closing_day / payment_day は "" を渡すと未設定に戻す。aliases は [] で全削除。
         """
         existing = self.get_company_by_id(company_id)
         if not existing:
             return None
+        if aliases is None:
+            new_aliases = existing.get("aliases", [])
+        else:
+            new_aliases = self._clean_aliases(aliases)
+            self.validate_aliases(existing["domain"], new_aliases, exclude_id=company_id)
         new_postal = existing["postal_code"] if postal_code is None else postal_code
         new_address = existing["address"] if address is None else address
         new_dept = existing["department"] if department is None else department
@@ -1245,11 +1264,12 @@ class MonthlyItemsDB:
                 UPDATE company_master
                 SET postal_code = ?, address = ?, department = ?,
                     taxable = ?, is_active = ?, updated_at = ?,
-                    closing_day = ?, payment_day = ?
+                    closing_day = ?, payment_day = ?, aliases = ?
                 WHERE id = ?
                 """,
                 (new_postal, new_address, new_dept, new_taxable, new_active,
-                 current_time, new_closing, new_payment, company_id),
+                 current_time, new_closing, new_payment,
+                 json.dumps(new_aliases, ensure_ascii=False), company_id),
             )
         return self.get_company_by_id(company_id)
 
@@ -1280,7 +1300,94 @@ class MonthlyItemsDB:
             # 支払条件（締め日・支払日）。空は未設定
             "closing_day": row["closing_day"] if "closing_day" in row.keys() else "",
             "payment_day": row["payment_day"] if "payment_day" in row.keys() else "",
+            # 伝票上の別名（正式名の代わりに伝票へ書かれる表記）
+            "aliases": MonthlyItemsDB._parse_aliases(row["aliases"] if "aliases" in row.keys() else "[]"),
         }
+
+    @staticmethod
+    def _parse_aliases(raw) -> list[str]:
+        try:
+            v = json.loads(raw) if raw else []
+        except (TypeError, ValueError):
+            return []
+        return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+
+    @staticmethod
+    def _clean_aliases(aliases) -> list[str]:
+        """空・重複（正規化後）を除いた別名リスト"""
+        out: list[str] = []
+        seen: set[str] = set()
+        for a in aliases or []:
+            s = str(a).strip()
+            n = normalize_for_similarity(s)
+            if not s or not n or n in seen:
+                continue
+            seen.add(n)
+            out.append(s)
+        return out
+
+    def validate_aliases(self, domain: str, aliases: list[str], exclude_id: Optional[int] = None):
+        """別名が他の有効な会社の正式名/別名とぶつからないか検証。ぶつかれば ValueError"""
+        for a in aliases:
+            n = normalize_for_similarity(a)
+            for c in self.list_companies(domain, include_inactive=False):
+                if exclude_id is not None and c["id"] == exclude_id:
+                    continue
+                if normalize_for_similarity(c["canonical_name"]) == n:
+                    raise ValueError(f"別名「{a}」は他の会社の正式名と同じです（{c['canonical_name']}）")
+                for other in c.get("aliases", []):
+                    if normalize_for_similarity(other) == n:
+                        raise ValueError(f"別名「{a}」は既に「{c['canonical_name']}」の別名として登録されています")
+
+    def find_company_by_alias(self, domain: str, name: str) -> Optional[dict]:
+        """伝票上の表記 name が、有効な会社の別名に一致すればその会社を返す
+
+        比較は法人格・CO.,LTD・記号・空白を除いた正規化名で行う。
+          1. 完全一致する別名を持つ会社が 1 社だけ → その会社
+          2. 無ければ、片方がもう片方を含む別名（短い側 3 文字以上）を持つ会社が 1 社だけ → その会社
+        同じ会社の別名同士（"CLANE" と "CLANE DESIGN"）が両方当たっても 1 社なので曖昧扱いにしない。
+        複数の会社に当たれば None（ピッカーへ）。
+        """
+        n = normalize_for_similarity(name)
+        if not n:
+            return None
+        companies = self.list_companies(domain, include_inactive=False)
+        exact: list[dict] = []
+        partial: list[dict] = []
+        for c in companies:
+            aliases_n = [normalize_for_similarity(a) for a in c.get("aliases", [])]
+            aliases_n = [a for a in aliases_n if a]
+            if not aliases_n:
+                continue
+            if any(a == n for a in aliases_n):
+                exact.append(c)
+            elif any(min(len(a), len(n)) >= 3 and (a in n or n in a) for a in aliases_n):
+                partial.append(c)
+        if len(exact) == 1:
+            return exact[0]
+        if exact:
+            return None
+        if len(partial) == 1:
+            return partial[0]
+        return None
+
+    def add_company_alias(self, domain: str, canonical_name: str, alias: str) -> Optional[dict]:
+        """会社に別名を1件追加（既にあれば何もしない）。会社が無ければ None"""
+        c = self.get_company(domain, canonical_name)
+        if not c:
+            return None
+        alias = (alias or "").strip()
+        if not alias:
+            return c
+        n = normalize_for_similarity(alias)
+        # 正式名そのものは別名にしない
+        if not n or n == normalize_for_similarity(c["canonical_name"]):
+            return c
+        if any(normalize_for_similarity(a) == n for a in c.get("aliases", [])):
+            return c
+        new_aliases = self._clean_aliases([*c.get("aliases", []), alias])
+        self.validate_aliases(domain, new_aliases, exclude_id=c["id"])
+        return self.update_company(c["id"], aliases=new_aliases)
 
     def update_delivery_note_amounts(
         self, delivery_note_id: int, subtotal: int, tax: int, total: int

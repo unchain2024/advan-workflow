@@ -48,7 +48,7 @@ interface Props {
   selectedYear: number;
   selectedMonth: number;
   salesPerson: string;
-  onSelectCompany: (groupIndex: number, name: string) => void;
+  onSelectCompany: (groupIndex: number, name: string, rememberAlias: boolean) => void;
   onSetShowAllCandidates: (groupIndex: number, show: boolean) => void;
   onRegenerate: (
     groupIndex: number,
@@ -84,6 +84,8 @@ export const CompanyGroupSection: React.FC<Props> = ({
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [showRegister, setShowRegister] = useState(false);
+  // ピッカーで選んだ会社に、抽出された表記を別名として覚えるか（次回から自動一致）
+  const [rememberAlias, setRememberAlias] = useState(!!group.extractedCompanyName);
 
   const handleRegister = async () => {
     const name = (registerName || group.extractedCompanyName).trim();
@@ -96,7 +98,7 @@ export const CompanyGroupSection: React.FC<Props> = ({
     try {
       await createCompanyMaster({ domain: 'sales', canonical_name: name });
       // 登録した会社名でそのまま確定（マッチするようになる）
-      onSelectCompany(groupIndex, name);
+      onSelectCompany(groupIndex, name, false);
     } catch (err) {
       const anyErr = err as { response?: { data?: { detail?: string } }; message?: string };
       setRegisterError(anyErr?.response?.data?.detail || anyErr?.message || '登録に失敗しました');
@@ -147,6 +149,24 @@ export const CompanyGroupSection: React.FC<Props> = ({
               </p>
             )}
 
+            {group.extractedCompanyName && (
+              <label className="mt-3 flex items-start gap-2 text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={rememberAlias}
+                  onChange={(e) => setRememberAlias(e.target.checked)}
+                  disabled={group.isMerging}
+                />
+                <span>
+                  「{group.extractedCompanyName}」を、選んだ会社の<b>伝票上の別名</b>として登録する
+                  <span className="block text-xs text-gray-500">
+                    次回からこの表記の伝票は自動でその会社に入ります（設定の得意先マスタで変更できます）
+                  </span>
+                </span>
+              </label>
+            )}
+
             {group.suggestedCandidates.length > 0 && (
               <div className="mt-3">
                 <p className="text-sm font-medium text-gray-600 mb-1">類似する会社名：</p>
@@ -154,7 +174,7 @@ export const CompanyGroupSection: React.FC<Props> = ({
                   {group.suggestedCandidates.map((name) => (
                     <button
                       key={name}
-                      onClick={() => onSelectCompany(groupIndex, name)}
+                      onClick={() => onSelectCompany(groupIndex, name, rememberAlias)}
                       disabled={group.isMerging}
                       className="block w-full text-left px-4 py-2 bg-blue-50 border-2 border-blue-400 rounded-lg hover:bg-blue-100 transition-colors text-gray-800 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
@@ -182,7 +202,7 @@ export const CompanyGroupSection: React.FC<Props> = ({
                     .map((name) => (
                       <button
                         key={name}
-                        onClick={() => onSelectCompany(groupIndex, name)}
+                        onClick={() => onSelectCompany(groupIndex, name, rememberAlias)}
                         disabled={group.isMerging}
                         className="block w-full text-left px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                       >

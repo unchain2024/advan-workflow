@@ -169,16 +169,29 @@ def resolve_company_name(
     # 宛先が自社か（= 相手が発行した伝票か）
     addressed_to_us = any(c.is_own and c.role in ("宛先", "仕入先欄") for c in candidates)
 
-    if master_names is None:
-        try:
-            from .canonical_companies import list_canonicals
-
-            master_names = list_canonicals(domain)
-        except Exception as e:
-            print(f"    [company_resolver] マスタ読込失敗（照合なしで継続）: {e}")
-            master_names = []
-
     from .sheets_client import match_company_name_with_filename
+
+    # マスタ照合: master_names 指定時（テスト用）はそのリストで、未指定なら
+    # DB の正式名＋別名（aliases）を見る sheets_client の getter で照合する
+    if master_names is None:
+        from .sheets_client import (
+            get_canonical_company_name,
+            get_canonical_purchase_company_name,
+        )
+
+        _getter = (
+            get_canonical_purchase_company_name if domain == "purchase" else get_canonical_company_name
+        )
+
+        def _match(name: str) -> Optional[str]:
+            try:
+                return _getter(name, filename=filename)
+            except Exception as e:
+                print(f"    [company_resolver] マスタ照合失敗（照合なしで継続）: {e}")
+                return None
+    else:
+        def _match(name: str) -> Optional[str]:
+            return match_company_name_with_filename(name, master_names, filename=filename)
 
     # 正規化後に同名の候補は 1 つにまとめる（先頭を残し、確信度は最大値）
     merged: dict[str, CompanyCandidate] = {}
@@ -198,12 +211,11 @@ def resolve_company_name(
             c.reasons.append("自社名")
             continue
         score = 0.0
-        if master_names:
-            m = match_company_name_with_filename(c.name, master_names, filename=filename)
-            if m:
-                c.master_match = m
-                score += MASTER_MATCH_SCORE
-                c.reasons.append(f"マスタ一致:{m}")
+        m = _match(c.name)
+        if m:
+            c.master_match = m
+            score += MASTER_MATCH_SCORE
+            c.reasons.append(f"マスタ一致:{m}")
         if c.role == "宛先":
             score += ROLE_SCORE_RECIPIENT
         elif c.role == "発行元":
